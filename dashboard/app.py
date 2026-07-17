@@ -6,17 +6,30 @@ from pathlib import Path
 from urllib.parse import parse_qs
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from clipfactory.config import load_settings, project_root
+from clipfactory.ids import make_clip_id
 from clipfactory.state import build_state
 
 app = FastAPI(title="ClipFactory Review")
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 root, settings = project_root(), load_settings()
 app.mount("/media", StaticFiles(directory=str(root)), name="media")
+
+
+def _resolve_clip_id(meta: dict) -> str:
+    if meta.get("clip_id"):
+        return str(meta["clip_id"])
+    return make_clip_id(
+        str(meta["source_id"]),
+        str(meta.get("external_id") or meta["source_id"]),
+        str(meta["niche"]),
+        float(meta["start"]),
+        float(meta["end"]),
+    )
 
 
 def _clips(niche: str | None = None) -> list[dict]:
@@ -26,19 +39,23 @@ def _clips(niche: str | None = None) -> list[dict]:
         meta = json.loads(meta_file.read_text())
         if niche and meta["niche"] != niche:
             continue
-        clips.append({"meta": meta, "directory": meta_file.parent, "clip_id": _clip_id(meta)})
-    return sorted(clips, key=lambda item: item["meta"]["created_at"], reverse=True)
-
-
-def _clip_id(meta: dict) -> str:
-    import hashlib
-    return hashlib.sha256(f"{meta['source_id']}:{meta['niche']}:{meta['start']:.3f}:{meta['end']:.3f}".encode()).hexdigest()[:16]
+        clips.append({"meta": meta, "directory": meta_file.parent, "clip_id": _resolve_clip_id(meta)})
+    return sorted(clips, key=lambda item: item["meta"].get("created_at", ""), reverse=True)
 
 
 @app.get("/", response_class=HTMLResponse)
 def index(request: Request, niche: str | None = None):
     clips = _clips(niche)
-    return templates.TemplateResponse(request, "index.html", {"clips": clips, "niches": sorted({item['meta']['niche'] for item in clips}), "selected": niche, "root": root})
+    return templates.TemplateResponse(
+        request,
+        "index.html",
+        {
+            "clips": clips,
+            "niches": sorted({item["meta"]["niche"] for item in clips}),
+            "selected": niche,
+            "root": root,
+        },
+    )
 
 
 @app.post("/clips/{clip_id}/{decision}")
@@ -60,4 +77,4 @@ async def decide(clip_id: str, decision: str, request: Request):
         feedback.parent.mkdir(parents=True, exist_ok=True)
         with feedback.open("a") as file:
             file.write(json.dumps({"clip_id": clip_id, "reason": reason.strip()}) + "\n")
-    return {"status": decision}
+    return HTMLResponse("")

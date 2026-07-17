@@ -26,11 +26,37 @@ spec:
                   value: firestore
                 - name: GCS_BUCKET
                   value: clipfactory-PROJECT_ID-out
+                - name: LLM_PROVIDER
+                  value: anthropic
+                - name: WHISPER_MODEL
+                  value: base
+                - name: WHISPER_DEVICE
+                  value: cpu
                 - name: ANTHROPIC_API_KEY
                   valueFrom:
                     secretKeyRef:
                       name: anthropic-api-key
                       key: latest
+                - name: NOTIFY_WEBHOOK_URL
+                  valueFrom:
+                    secretKeyRef:
+                      name: notify-webhook-url
+                      key: latest
+                - name: YOUTUBE_API_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: youtube-api-key
+                      key: latest
+                - name: YTDLP_COOKIES_FILE
+                  value: /secrets/cookies.txt
+              volumeMounts:
+                - name: yt-cookies
+                  mountPath: /secrets
+                  readOnly: true
+          volumes:
+            - name: yt-cookies
+              secret:
+                secretName: ytdlp-cookies
       metadata:
         annotations:
           run.googleapis.com/execution-environment: gen2

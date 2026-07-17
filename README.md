@@ -15,8 +15,8 @@ make dashboard
 
 The output is `outbox/<niche>/<date>_<slug>/clip.mp4`, `cover.jpg`, and `meta.json`.
 For scheduled sources, add rights-aware sources in `config/sources.yaml`, then run
-`python -m clipfactory.run --once`. The state database prevents the same source episode
-or niche run from being duplicated.
+`python -m clipfactory.run --once`. State tracks per-niche runs: completed niches are
+skipped, while failed niches are retried on the next `--once`.
 
 ## Configuration
 
@@ -25,7 +25,8 @@ length, caption style, colors, hashtags, hooks, and music. Add only royalty-free
 under `assets/music/<niche>/`; a missing folder skips music without failing a clip.
 
 Set `LLM_PROVIDER=anthropic|openai|gemini` and its matching API key. Anthropic is the
-default. `WHISPER_DEVICE=cuda` enables a supported local CUDA worker; Cloud Run uses CPU
+default. Optional `YOUTUBE_API_KEY` uses the YouTube Data API for discovery (falls back to
+yt-dlp). `WHISPER_DEVICE=cuda` enables a supported local CUDA worker; Cloud Run uses CPU
 with `base` and int8 defaults.
 
 ## Review and feedback

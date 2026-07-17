@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -21,21 +22,61 @@ def _write_srt(transcript: Transcript, path: Path) -> None:
     path.write_text("\n".join(lines))
 
 
-def transcribe(media_path: Path, cache_dir: Path, model_name: str = "base", device: str = "auto") -> Transcript:
+def media_content_hash(media_path: Path) -> str:
+    digest = hashlib.sha256()
+    with media_path.open("rb") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def transcribe(
+    media_path: Path,
+    cache_dir: Path,
+    model_name: str = "base",
+    device: str = "auto",
+    content_hash: str | None = None,
+) -> Transcript:
     cache_dir.mkdir(parents=True, exist_ok=True)
-    json_path = cache_dir / f"{media_path.stem}.json"
-    srt_path = cache_dir / f"{media_path.stem}.srt"
-    if json_path.exists() and json_path.stat().st_mtime >= media_path.stat().st_mtime:
+    key = content_hash or media_content_hash(media_path)
+    json_path = cache_dir / f"{key}.json"
+    srt_path = cache_dir / f"{key}.srt"
+    # Compatibility: also accept legacy stem-based caches.
+    legacy_json = cache_dir / f"{media_path.stem}.json"
+    if json_path.exists():
         return Transcript.model_validate_json(json_path.read_text())
+    if legacy_json.exists() and legacy_json.stat().st_mtime >= media_path.stat().st_mtime:
+        transcript = Transcript.model_validate_json(legacy_json.read_text())
+        json_path.write_text(transcript.model_dump_json(indent=2))
+        return transcript
+
     from faster_whisper import WhisperModel
+
     resolved_device = "cuda" if device == "cuda" else "cpu" if device == "cpu" else "cpu"
     compute_type = "float16" if resolved_device == "cuda" else "int8"
     model = WhisperModel(model_name, device=resolved_device, compute_type=compute_type)
-    raw_segments, info = model.transcribe(str(media_path), beam_size=5, word_timestamps=True, vad_filter=True, condition_on_previous_text=False)
+    raw_segments, info = model.transcribe(
+        str(media_path),
+        beam_size=5,
+        word_timestamps=True,
+        vad_filter=True,
+        condition_on_previous_text=False,
+    )
     segments = []
     for item in raw_segments:
-        words = [Word(word=(word.word or "").strip(), start=float(word.start), end=float(word.end)) for word in (item.words or []) if word.word]
-        segments.append(TranscriptSegment(start=float(item.start), end=float(item.end), text=(item.text or "").strip(), words=words))
+        words = [
+            Word(word=(word.word or "").strip(), start=float(word.start), end=float(word.end))
+            for word in (item.words or [])
+            if word.word
+        ]
+        segments.append(
+            TranscriptSegment(
+                start=float(item.start),
+                end=float(item.end),
+                text=(item.text or "").strip(),
+                words=words,
+            )
+        )
     transcript = Transcript(duration=float(info.duration or (segments[-1].end if segments else 0)), segments=segments)
     json_path.write_text(transcript.model_dump_json(indent=2))
     _write_srt(transcript, srt_path)

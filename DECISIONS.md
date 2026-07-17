@@ -23,3 +23,17 @@ MIT engine plus our own renderer.
 ## 2026-07-16: cloud state
 Cloud Run uses Firestore for coordination and GCS for binary artifacts. SQLite is
 local-only; a SQLite file on a GCS mount is not a supported state store.
+
+## 2026-07-17: discovery dedupe is per-niche
+`--once` rediscovers an episode while any configured niche run is missing or
+`failed`. Completed niches stay blocked by `claim_niche_run`; episode-level
+presence alone is not enough to skip unfinished niches.
+
+## 2026-07-17: clip identity
+`clip_id` is `sha256(source_id:external_id:niche:start:end)[:16]` and is written
+into `meta.json` so the dashboard approve/reject path updates the same state row
+the ranker reads for rejection feedback.
+
+## 2026-07-17: YouTube discovery
+When `YOUTUBE_API_KEY` is set, discovery prefers the YouTube Data API for channel
+handles, channel IDs, and playlists, then falls back to yt-dlp flat playlists.

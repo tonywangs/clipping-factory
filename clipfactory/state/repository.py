@@ -10,9 +10,34 @@ from typing import Any
 from ..config import project_root
 from ..models import Episode
 
+TERMINAL_SUCCESS = {"completed"}
+BLOCKING_STATUSES = {"running", "completed"}
+
 
 def now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _feedback_jsonl(niche: str, limit: int, exclude: set[str] | None = None) -> list[str]:
+    path = project_root() / "feedback" / f"{niche}.jsonl"
+    if not path.exists() or limit <= 0:
+        return []
+    exclude = exclude or set()
+    reasons: list[str] = []
+    for line in reversed(path.read_text().splitlines()):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        reason = str(payload.get("reason") or "").strip()
+        if reason and reason not in exclude and reason not in reasons:
+            reasons.append(reason)
+        if len(reasons) >= limit:
+            break
+    return reasons
 
 
 class StateRepository(ABC):
@@ -32,6 +57,12 @@ class StateRepository(ABC):
     def finish_niche_run(self, source_id: str, external_id: str, niche: str, status: str, error: str | None = None) -> None: ...
 
     @abstractmethod
+    def niche_run_status(self, source_id: str, external_id: str, niche: str) -> str | None: ...
+
+    @abstractmethod
+    def has_pending_niche_work(self, source_id: str, external_id: str, niches: list[str]) -> bool: ...
+
+    @abstractmethod
     def add_clip(self, clip_id: str, source_id: str, external_id: str, niche: str, path: str, meta: dict[str, Any]) -> None: ...
 
     @abstractmethod
@@ -42,6 +73,9 @@ class StateRepository(ABC):
 
     @abstractmethod
     def record_run(self, summary: dict[str, Any]) -> None: ...
+
+    @abstractmethod
+    def last_run_at(self) -> datetime | None: ...
 
 
 class SQLiteState(StateRepository):
@@ -89,7 +123,7 @@ class SQLiteState(StateRepository):
 
     def claim_niche_run(self, source_id: str, external_id: str, niche: str) -> bool:
         row = self.conn.execute("SELECT status FROM niche_runs WHERE source_id=? AND external_id=? AND niche=?", (source_id, external_id, niche)).fetchone()
-        if row and row["status"] in {"running", "completed"}:
+        if row and row["status"] in BLOCKING_STATUSES:
             return False
         self.conn.execute("""INSERT INTO niche_runs VALUES (?, ?, ?, 'running', NULL, ?)
           ON CONFLICT(source_id, external_id, niche) DO UPDATE SET status='running', error=NULL, updated_at=excluded.updated_at""",
@@ -98,8 +132,22 @@ class SQLiteState(StateRepository):
         return True
 
     def finish_niche_run(self, source_id: str, external_id: str, niche: str, status: str, error: str | None = None) -> None:
-        self.conn.execute("UPDATE niche_runs SET status=?, error=?, updated_at=? WHERE source_id=? AND external_id=? AND niche=?", (status, error, now(), source_id, external_id, niche))
+        self.conn.execute(
+            """INSERT INTO niche_runs VALUES (?, ?, ?, ?, ?, ?)
+               ON CONFLICT(source_id, external_id, niche) DO UPDATE SET status=excluded.status, error=excluded.error, updated_at=excluded.updated_at""",
+            (source_id, external_id, niche, status, error, now()),
+        )
         self.conn.commit()
+
+    def niche_run_status(self, source_id: str, external_id: str, niche: str) -> str | None:
+        row = self.conn.execute(
+            "SELECT status FROM niche_runs WHERE source_id=? AND external_id=? AND niche=?",
+            (source_id, external_id, niche),
+        ).fetchone()
+        return str(row["status"]) if row else None
+
+    def has_pending_niche_work(self, source_id: str, external_id: str, niches: list[str]) -> bool:
+        return any(self.niche_run_status(source_id, external_id, niche) not in TERMINAL_SUCCESS for niche in niches)
 
     def add_clip(self, clip_id: str, source_id: str, external_id: str, niche: str, path: str, meta: dict[str, Any]) -> None:
         self.conn.execute("""INSERT INTO clips VALUES (?, ?, ?, ?, 'outbox', ?, ?, NULL, ?)
@@ -108,16 +156,32 @@ class SQLiteState(StateRepository):
         self.conn.commit()
 
     def transition_clip(self, clip_id: str, status: str, rejection_reason: str | None = None) -> None:
-        self.conn.execute("UPDATE clips SET status=?, rejection_reason=?, updated_at=? WHERE clip_id=?", (status, rejection_reason, now(), clip_id))
+        self.conn.execute(
+            "UPDATE clips SET status=?, rejection_reason=?, updated_at=? WHERE clip_id=?",
+            (status, rejection_reason, now(), clip_id),
+        )
         self.conn.commit()
 
     def recent_feedback(self, niche: str, limit: int = 20) -> list[str]:
-        rows = self.conn.execute("SELECT rejection_reason FROM clips WHERE niche=? AND rejection_reason IS NOT NULL ORDER BY updated_at DESC LIMIT ?", (niche, limit)).fetchall()
-        return [row["rejection_reason"] for row in rows]
+        rows = self.conn.execute(
+            "SELECT rejection_reason FROM clips WHERE niche=? AND rejection_reason IS NOT NULL ORDER BY updated_at DESC LIMIT ?",
+            (niche, limit),
+        ).fetchall()
+        reasons = [row["rejection_reason"] for row in rows]
+        if len(reasons) >= limit:
+            return reasons[:limit]
+        reasons.extend(_feedback_jsonl(niche, limit - len(reasons), exclude=set(reasons)))
+        return reasons[:limit]
 
     def record_run(self, summary: dict[str, Any]) -> None:
         self.conn.execute("INSERT INTO runs(summary, created_at) VALUES (?, ?)", (json.dumps(summary), now()))
         self.conn.commit()
+
+    def last_run_at(self) -> datetime | None:
+        row = self.conn.execute("SELECT created_at FROM runs ORDER BY id DESC LIMIT 1").fetchone()
+        if not row:
+            return None
+        return datetime.fromisoformat(row["created_at"])
 
 
 class FirestoreState(StateRepository):
@@ -146,7 +210,7 @@ class FirestoreState(StateRepository):
         @transactional(transaction)
         def claim(tx):
             existing = ref.get(transaction=tx)
-            if existing.exists and existing.to_dict().get("status") in {"running", "completed"}:
+            if existing.exists and existing.to_dict().get("status") in BLOCKING_STATUSES:
                 return False
             tx.set(ref, {"status": "running", "updated_at": now()}, merge=True)
             return True
@@ -154,6 +218,15 @@ class FirestoreState(StateRepository):
 
     def finish_niche_run(self, source_id: str, external_id: str, niche: str, status: str, error: str | None = None) -> None:
         self.client.collection("niche_runs").document(f"{source_id}:{external_id}:{niche}").set({"status": status, "error": error, "updated_at": now()}, merge=True)
+
+    def niche_run_status(self, source_id: str, external_id: str, niche: str) -> str | None:
+        snap = self.client.collection("niche_runs").document(f"{source_id}:{external_id}:{niche}").get()
+        if not snap.exists:
+            return None
+        return snap.to_dict().get("status")
+
+    def has_pending_niche_work(self, source_id: str, external_id: str, niches: list[str]) -> bool:
+        return any(self.niche_run_status(source_id, external_id, niche) not in TERMINAL_SUCCESS for niche in niches)
 
     def add_clip(self, clip_id: str, source_id: str, external_id: str, niche: str, path: str, meta: dict[str, Any]) -> None:
         self.client.collection("clips").document(clip_id).set({"source_id": source_id, "external_id": external_id, "niche": niche, "status": "outbox", "path": path, "meta": meta, "updated_at": now()}, merge=True)
@@ -163,10 +236,24 @@ class FirestoreState(StateRepository):
 
     def recent_feedback(self, niche: str, limit: int = 20) -> list[str]:
         rows = self.client.collection("clips").where("niche", "==", niche).where("status", "==", "rejected").order_by("updated_at", direction="DESCENDING").limit(limit).stream()
-        return [item.to_dict().get("rejection_reason", "") for item in rows if item.to_dict().get("rejection_reason")]
+        reasons = [item.to_dict().get("rejection_reason", "") for item in rows if item.to_dict().get("rejection_reason")]
+        if len(reasons) >= limit:
+            return reasons[:limit]
+        reasons.extend(_feedback_jsonl(niche, limit - len(reasons), exclude=set(reasons)))
+        return reasons[:limit]
 
     def record_run(self, summary: dict[str, Any]) -> None:
         self.client.collection("runs").add(summary | {"created_at": now()})
+
+    def last_run_at(self) -> datetime | None:
+        rows = self.client.collection("runs").order_by("created_at", direction="DESCENDING").limit(1).stream()
+        for item in rows:
+            value = item.to_dict().get("created_at")
+            if isinstance(value, datetime):
+                return value
+            if isinstance(value, str):
+                return datetime.fromisoformat(value)
+        return None
 
 
 def build_state(backend: str, project: str | None = None) -> StateRepository:

@@ -130,8 +130,10 @@ class Candidate(BaseModel):
 
 
 class ClipMeta(BaseModel):
+    clip_id: str
     niche: str
     source_id: str
+    external_id: str
     source_show: str
     episode_title: str
     episode_url: str

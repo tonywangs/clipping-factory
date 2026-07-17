@@ -5,6 +5,7 @@ import random
 import subprocess
 from pathlib import Path
 
+from ..config import project_root
 from ..models import Candidate, Episode, NicheConfig, Transcript
 from .captions import write_ass
 
@@ -63,7 +64,7 @@ def _loudnorm_measure(source: Path) -> str | None:
 def _music_track(niche: NicheConfig) -> Path | None:
     if not niche.music:
         return None
-    directory = Path("assets/music") / niche.name
+    directory = project_root() / "assets" / "music" / niche.name
     tracks = [path for path in directory.glob("*") if path.suffix.lower() in {".mp3", ".wav", ".m4a", ".aac"}]
     return random.choice(tracks) if tracks else None
 
@@ -72,18 +73,18 @@ def _burn_and_mix(source: Path, ass: Path, target: Path, niche: NicheConfig, dur
     filters = subprocess.run(["ffmpeg", "-hide_banner", "-filters"], text=True, capture_output=True, check=True).stdout
     if " subtitles " not in filters:
         raise RuntimeError("FFmpeg was built without libass/subtitles support. Install an FFmpeg build with libass or use the supplied Docker image.")
-    font_dir = Path("assets/fonts").resolve()
+    font_dir = (project_root() / "assets" / "fonts").resolve()
     vf = f"subtitles='{ass.resolve()}':fontsdir='{font_dir}'"
     norm = _loudnorm_measure(source) or "loudnorm=I=-14:TP=-1.5:LRA=11"
     command = ["ffmpeg", "-y", "-i", str(source)]
     if music:
         command += ["-stream_loop", "-1", "-i", str(music)]
         music_base = f"[1:a]volume={niche.music_volume_db}dB,afade=t=in:d=0.5,afade=t=out:st={max(0, duration - .5):.3f}:d=0.5[music]"
-        filters = [
-            f"{music_base};[0:a][music]sidechaincompress=threshold=0.02:ratio=8[ducked];[ducked][music]amix=inputs=2:duration=first:dropout_transition=0,{norm}[audio]",
+        filter_candidates = [
+            f"{music_base};[0:a]asplit=2[speech][sc];[music][sc]sidechaincompress=threshold=0.02:ratio=8[ducked];[speech][ducked]amix=inputs=2:duration=first:dropout_transition=0,{norm}[audio]",
             f"{music_base};[0:a][music]amix=inputs=2:duration=first:dropout_transition=0,{norm}[audio]",
         ]
-        for index, music_filter in enumerate(filters):
+        for index, music_filter in enumerate(filter_candidates):
             render_command = command + ["-filter_complex", music_filter, "-vf", vf, "-map", "0:v:0", "-map", "[audio]"]
             render_command += ["-t", f"{min(duration, 60):.3f}", "-c:v", "libx264", "-profile:v", "high", "-crf", "20", "-preset", "fast", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", str(target)]
             try:
@@ -91,11 +92,10 @@ def _burn_and_mix(source: Path, ass: Path, target: Path, niche: NicheConfig, dur
                 return
             except subprocess.CalledProcessError:
                 target.unlink(missing_ok=True)
-                if index == len(filters) - 1:
+                if index == len(filter_candidates) - 1:
                     raise
         return
-    else:
-        command += ["-vf", vf, "-af", norm, "-map", "0:v:0", "-map", "0:a:0?"]
+    command += ["-vf", vf, "-af", norm, "-map", "0:v:0", "-map", "0:a:0?"]
     command += ["-t", f"{min(duration, 60):.3f}", "-c:v", "libx264", "-profile:v", "high", "-crf", "20", "-preset", "fast", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", str(target)]
     _run(command)
 
