@@ -1,0 +1,39 @@
+[project]
+name = "clipfactory"
+version = "0.1.0"
+description = "Local-first automated podcast clipping pipeline"
+requires-python = ">=3.11"
+dependencies = [
+  "anthropic>=0.49.0",
+  "fastapi>=0.115.0",
+  "feedparser>=6.0.11",
+  "google-cloud-firestore>=2.19.0",
+  "google-cloud-storage>=2.18.0",
+  "httpx>=0.27.0",
+  "jinja2>=3.1.4",
+  "openai>=1.0.0",
+  "opencv-python-headless>=4.10.0.84",
+  "pydantic>=2.9.0",
+  "pydantic-settings>=2.5.0",
+  "pysubs2>=1.7.3",
+  "python-dotenv>=1.0.1",
+  "pyyaml>=6.0.2",
+  "typer>=0.12.5",
+  "uvicorn>=0.30.6",
+  "yt-dlp>=2025.1.0",
+]
+
+[project.optional-dependencies]
+local = ["faster-whisper>=1.1.0"]
+test = ["pytest>=8.3.0", "pytest-asyncio>=0.24.0"]
+
+[project.scripts]
+clipfactory = "clipfactory.run:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["e2e: requires ffmpeg and external credentials"]
+
+[build-system]
+requires = ["hatchling>=1.25.0"]
+build-backend = "hatchling.build"

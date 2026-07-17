@@ -1,0 +1,36 @@
+apiVersion: run.googleapis.com/v1
+kind: Job
+metadata:
+  name: clipfactory-run
+  annotations:
+    run.googleapis.com/launch-stage: BETA
+spec:
+  template:
+    spec:
+      template:
+        spec:
+          serviceAccountName: clipfactory-job@PROJECT_ID.iam.gserviceaccount.com
+          timeoutSeconds: 3600
+          maxRetries: 1
+          containers:
+            - image: REGION-docker.pkg.dev/PROJECT_ID/clipfactory/clipfactory:TAG
+              args: ["--once"]
+              resources:
+                limits:
+                  cpu: "4"
+                  memory: 8Gi
+              env:
+                - name: STORAGE_BACKEND
+                  value: gcs
+                - name: STATE_BACKEND
+                  value: firestore
+                - name: GCS_BUCKET
+                  value: clipfactory-PROJECT_ID-out
+                - name: ANTHROPIC_API_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: anthropic-api-key
+                      key: latest
+      metadata:
+        annotations:
+          run.googleapis.com/execution-environment: gen2

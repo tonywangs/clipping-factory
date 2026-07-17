@@ -1,0 +1,25 @@
+# Decisions
+
+## 2026-07-16: engine boundary
+`engine/` vendors the MIT-licensed SamurAIGPT generator at
+`063f9e950f331fdf4a5dd787be4390fe3a960148`. We reuse its local downloader,
+highlight chunking/dedupe, and OpenCV crop concept while ClipFactory owns the
+pipeline, state, packaging, and review workflow.
+
+## 2026-07-16: captions
+Caption rendering is an original `pysubs2` + libass implementation informed by
+brainrotinator's documented SRT/ASS approach. No brainrotinator source is copied
+because its license disallows commercial cloud-service use.
+
+## 2026-07-16: podcli boundary
+Podcli's public caption-style, knowledge-base, and tracking ideas informed the
+product shape only. No code is copied because podcli is AGPL-3.0.
+
+## 2026-07-16: secondary references
+Cliper-AI, hotclip, and ai-clipping-generator were evaluated at a high level.
+None offered a caption renderer or detector that justified a dependency over the
+MIT engine plus our own renderer.
+
+## 2026-07-16: cloud state
+Cloud Run uses Firestore for coordination and GCS for binary artifacts. SQLite is
+local-only; a SQLite file on a GCS mount is not a supported state store.

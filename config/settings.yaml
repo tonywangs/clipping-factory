@@ -1,0 +1,15 @@
+storage_backend: local
+state_backend: sqlite
+max_new_episodes_per_run: 3
+download_max_height: 1080
+whisper_model: base
+whisper_device: auto
+outbox_dir: outbox
+raw_dir: raw
+transcript_dir: transcripts
+work_dir: work
+feedback_dir: feedback
+music_volume_db: -22
+costs_per_million_tokens:
+  input: 3.0
+  output: 15.0

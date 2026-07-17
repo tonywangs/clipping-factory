@@ -1,0 +1,19 @@
+name: startup
+account_handle: "@your_handle"
+audience: "Ambitious builders who value useful, contrarian advice"
+tone: "high-agency, punchy, no fluff"
+prioritize_topics: [fundraising, founder stories, big tech, AI]
+skip_topics: [politics, health advice]
+banned_words: []
+clip_length_seconds: {min: 25, max: 55}
+clips_per_episode: 4
+min_score: 72
+caption_style: hormozi
+accent_color: "#FFD400"
+hashtags_base: ["#startup", "#tech", "#founder", "#fyp"]
+example_hooks:
+  - "Nobody talks about this, but it killed my first startup"
+  - "The email that got me into YC was 4 sentences"
+  - "He turned down $50M and here's why"
+music: true
+music_volume_db: -22
