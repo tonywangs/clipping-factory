@@ -10,6 +10,9 @@ from typing import Any
 from ..config import project_root
 from ..models import Episode
 
+TERMINAL_SUCCESS = {"completed"}
+BLOCKING_STATUSES = {"running", "completed"}
+
 
 def now() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -32,6 +35,12 @@ class StateRepository(ABC):
     def finish_niche_run(self, source_id: str, external_id: str, niche: str, status: str, error: str | None = None) -> None: ...
 
     @abstractmethod
+    def niche_run_status(self, source_id: str, external_id: str, niche: str) -> str | None: ...
+
+    @abstractmethod
+    def has_pending_niche_work(self, source_id: str, external_id: str, niches: list[str]) -> bool: ...
+
+    @abstractmethod
     def add_clip(self, clip_id: str, source_id: str, external_id: str, niche: str, path: str, meta: dict[str, Any]) -> None: ...
 
     @abstractmethod
@@ -42,6 +51,9 @@ class StateRepository(ABC):
 
     @abstractmethod
     def record_run(self, summary: dict[str, Any]) -> None: ...
+
+    @abstractmethod
+    def last_run_at(self) -> datetime | None: ...
 
 
 class SQLiteState(StateRepository):
@@ -89,7 +101,7 @@ class SQLiteState(StateRepository):
 
     def claim_niche_run(self, source_id: str, external_id: str, niche: str) -> bool:
         row = self.conn.execute("SELECT status FROM niche_runs WHERE source_id=? AND external_id=? AND niche=?", (source_id, external_id, niche)).fetchone()
-        if row and row["status"] in {"running", "completed"}:
+        if row and row["status"] in BLOCKING_STATUSES:
             return False
         self.conn.execute("""INSERT INTO niche_runs VALUES (?, ?, ?, 'running', NULL, ?)
           ON CONFLICT(source_id, external_id, niche) DO UPDATE SET status='running', error=NULL, updated_at=excluded.updated_at""",
@@ -98,8 +110,22 @@ class SQLiteState(StateRepository):
         return True
 
     def finish_niche_run(self, source_id: str, external_id: str, niche: str, status: str, error: str | None = None) -> None:
-        self.conn.execute("UPDATE niche_runs SET status=?, error=?, updated_at=? WHERE source_id=? AND external_id=? AND niche=?", (status, error, now(), source_id, external_id, niche))
+        self.conn.execute(
+            """INSERT INTO niche_runs VALUES (?, ?, ?, ?, ?, ?)
+               ON CONFLICT(source_id, external_id, niche) DO UPDATE SET status=excluded.status, error=excluded.error, updated_at=excluded.updated_at""",
+            (source_id, external_id, niche, status, error, now()),
+        )
         self.conn.commit()
+
+    def niche_run_status(self, source_id: str, external_id: str, niche: str) -> str | None:
+        row = self.conn.execute(
+            "SELECT status FROM niche_runs WHERE source_id=? AND external_id=? AND niche=?",
+            (source_id, external_id, niche),
+        ).fetchone()
+        return str(row["status"]) if row else None
+
+    def has_pending_niche_work(self, source_id: str, external_id: str, niches: list[str]) -> bool:
+        return any(self.niche_run_status(source_id, external_id, niche) not in TERMINAL_SUCCESS for niche in niches)
 
     def add_clip(self, clip_id: str, source_id: str, external_id: str, niche: str, path: str, meta: dict[str, Any]) -> None:
         self.conn.execute("""INSERT INTO clips VALUES (?, ?, ?, ?, 'outbox', ?, ?, NULL, ?)
@@ -118,6 +144,12 @@ class SQLiteState(StateRepository):
     def record_run(self, summary: dict[str, Any]) -> None:
         self.conn.execute("INSERT INTO runs(summary, created_at) VALUES (?, ?)", (json.dumps(summary), now()))
         self.conn.commit()
+
+    def last_run_at(self) -> datetime | None:
+        row = self.conn.execute("SELECT created_at FROM runs ORDER BY id DESC LIMIT 1").fetchone()
+        if not row:
+            return None
+        return datetime.fromisoformat(row["created_at"])
 
 
 class FirestoreState(StateRepository):
@@ -146,7 +178,7 @@ class FirestoreState(StateRepository):
         @transactional(transaction)
         def claim(tx):
             existing = ref.get(transaction=tx)
-            if existing.exists and existing.to_dict().get("status") in {"running", "completed"}:
+            if existing.exists and existing.to_dict().get("status") in BLOCKING_STATUSES:
                 return False
             tx.set(ref, {"status": "running", "updated_at": now()}, merge=True)
             return True
@@ -154,6 +186,15 @@ class FirestoreState(StateRepository):
 
     def finish_niche_run(self, source_id: str, external_id: str, niche: str, status: str, error: str | None = None) -> None:
         self.client.collection("niche_runs").document(f"{source_id}:{external_id}:{niche}").set({"status": status, "error": error, "updated_at": now()}, merge=True)
+
+    def niche_run_status(self, source_id: str, external_id: str, niche: str) -> str | None:
+        snap = self.client.collection("niche_runs").document(f"{source_id}:{external_id}:{niche}").get()
+        if not snap.exists:
+            return None
+        return snap.to_dict().get("status")
+
+    def has_pending_niche_work(self, source_id: str, external_id: str, niches: list[str]) -> bool:
+        return any(self.niche_run_status(source_id, external_id, niche) not in TERMINAL_SUCCESS for niche in niches)
 
     def add_clip(self, clip_id: str, source_id: str, external_id: str, niche: str, path: str, meta: dict[str, Any]) -> None:
         self.client.collection("clips").document(clip_id).set({"source_id": source_id, "external_id": external_id, "niche": niche, "status": "outbox", "path": path, "meta": meta, "updated_at": now()}, merge=True)
@@ -167,6 +208,16 @@ class FirestoreState(StateRepository):
 
     def record_run(self, summary: dict[str, Any]) -> None:
         self.client.collection("runs").add(summary | {"created_at": now()})
+
+    def last_run_at(self) -> datetime | None:
+        rows = self.client.collection("runs").order_by("created_at", direction="DESCENDING").limit(1).stream()
+        for item in rows:
+            value = item.to_dict().get("created_at")
+            if isinstance(value, datetime):
+                return value
+            if isinstance(value, str):
+                return datetime.fromisoformat(value)
+        return None
 
 
 def build_state(backend: str, project: str | None = None) -> StateRepository:

@@ -15,8 +15,8 @@ make dashboard
 
 The output is `outbox/<niche>/<date>_<slug>/clip.mp4`, `cover.jpg`, and `meta.json`.
 For scheduled sources, add rights-aware sources in `config/sources.yaml`, then run
-`python -m clipfactory.run --once`. The state database prevents the same source episode
-or niche run from being duplicated.
+`python -m clipfactory.run --once`. State tracks per-niche runs: completed niches are
+skipped, while failed niches are retried on the next `--once`.
 
 ## Configuration
 
