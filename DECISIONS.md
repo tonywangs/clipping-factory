@@ -33,3 +33,7 @@ presence alone is not enough to skip unfinished niches.
 `clip_id` is `sha256(source_id:external_id:niche:start:end)[:16]` and is written
 into `meta.json` so the dashboard approve/reject path updates the same state row
 the ranker reads for rejection feedback.
+
+## 2026-07-17: YouTube discovery
+When `YOUTUBE_API_KEY` is set, discovery prefers the YouTube Data API for channel
+handles, channel IDs, and playlists, then falls back to yt-dlp flat playlists.

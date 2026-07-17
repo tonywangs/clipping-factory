@@ -4,7 +4,11 @@ from clipfactory.models import Episode, LicenseStatus
 from clipfactory.state.repository import SQLiteState
 
 
-def test_state_claims_once_and_preserves_feedback(tmp_path: Path):
+def test_state_claims_once_and_preserves_feedback(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("LOCAL_ROOT", str(tmp_path))
+    from clipfactory.config import project_root
+
+    project_root.cache_clear()
     state = SQLiteState(tmp_path / "state.sqlite")
     episode = Episode(
         source_id="show",
@@ -23,7 +27,11 @@ def test_state_claims_once_and_preserves_feedback(tmp_path: Path):
     assert state.recent_feedback("startup") == ["bad hook"]
 
 
-def test_failed_niche_remains_pending(tmp_path: Path):
+def test_failed_niche_remains_pending(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("LOCAL_ROOT", str(tmp_path))
+    from clipfactory.config import project_root
+
+    project_root.cache_clear()
     state = SQLiteState(tmp_path / "state.sqlite")
     assert state.has_pending_niche_work("show", "one", ["startup", "ai"])
     assert state.claim_niche_run("show", "one", "startup")
@@ -36,7 +44,11 @@ def test_failed_niche_remains_pending(tmp_path: Path):
     assert not state.has_pending_niche_work("show", "one", ["startup", "ai"])
 
 
-def test_last_run_at(tmp_path: Path):
+def test_last_run_at(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("LOCAL_ROOT", str(tmp_path))
+    from clipfactory.config import project_root
+
+    project_root.cache_clear()
     state = SQLiteState(tmp_path / "state.sqlite")
     assert state.last_run_at() is None
     state.record_run({"clips": []})

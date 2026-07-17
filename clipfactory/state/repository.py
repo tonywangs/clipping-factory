@@ -18,6 +18,28 @@ def now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _feedback_jsonl(niche: str, limit: int, exclude: set[str] | None = None) -> list[str]:
+    path = project_root() / "feedback" / f"{niche}.jsonl"
+    if not path.exists() or limit <= 0:
+        return []
+    exclude = exclude or set()
+    reasons: list[str] = []
+    for line in reversed(path.read_text().splitlines()):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        reason = str(payload.get("reason") or "").strip()
+        if reason and reason not in exclude and reason not in reasons:
+            reasons.append(reason)
+        if len(reasons) >= limit:
+            break
+    return reasons
+
+
 class StateRepository(ABC):
     @abstractmethod
     def episode_seen(self, source_id: str, external_id: str) -> bool: ...
@@ -134,12 +156,22 @@ class SQLiteState(StateRepository):
         self.conn.commit()
 
     def transition_clip(self, clip_id: str, status: str, rejection_reason: str | None = None) -> None:
-        self.conn.execute("UPDATE clips SET status=?, rejection_reason=?, updated_at=? WHERE clip_id=?", (status, rejection_reason, now(), clip_id))
+        self.conn.execute(
+            "UPDATE clips SET status=?, rejection_reason=?, updated_at=? WHERE clip_id=?",
+            (status, rejection_reason, now(), clip_id),
+        )
         self.conn.commit()
 
     def recent_feedback(self, niche: str, limit: int = 20) -> list[str]:
-        rows = self.conn.execute("SELECT rejection_reason FROM clips WHERE niche=? AND rejection_reason IS NOT NULL ORDER BY updated_at DESC LIMIT ?", (niche, limit)).fetchall()
-        return [row["rejection_reason"] for row in rows]
+        rows = self.conn.execute(
+            "SELECT rejection_reason FROM clips WHERE niche=? AND rejection_reason IS NOT NULL ORDER BY updated_at DESC LIMIT ?",
+            (niche, limit),
+        ).fetchall()
+        reasons = [row["rejection_reason"] for row in rows]
+        if len(reasons) >= limit:
+            return reasons[:limit]
+        reasons.extend(_feedback_jsonl(niche, limit - len(reasons), exclude=set(reasons)))
+        return reasons[:limit]
 
     def record_run(self, summary: dict[str, Any]) -> None:
         self.conn.execute("INSERT INTO runs(summary, created_at) VALUES (?, ?)", (json.dumps(summary), now()))
@@ -204,7 +236,11 @@ class FirestoreState(StateRepository):
 
     def recent_feedback(self, niche: str, limit: int = 20) -> list[str]:
         rows = self.client.collection("clips").where("niche", "==", niche).where("status", "==", "rejected").order_by("updated_at", direction="DESCENDING").limit(limit).stream()
-        return [item.to_dict().get("rejection_reason", "") for item in rows if item.to_dict().get("rejection_reason")]
+        reasons = [item.to_dict().get("rejection_reason", "") for item in rows if item.to_dict().get("rejection_reason")]
+        if len(reasons) >= limit:
+            return reasons[:limit]
+        reasons.extend(_feedback_jsonl(niche, limit - len(reasons), exclude=set(reasons)))
+        return reasons[:limit]
 
     def record_run(self, summary: dict[str, Any]) -> None:
         self.client.collection("runs").add(summary | {"created_at": now()})
