@@ -1,4 +1,9 @@
-"""Resolve a caption-capable ffmpeg binary (conda builds often lack libass)."""
+"""Resolve a caption-capable ffmpeg binary.
+
+Homebrew's default `ffmpeg` bottle is often built without libass, so the
+`subtitles` filter is missing. Prefer `ffmpeg-full` keg paths and explicit
+FFMPEG_BINARY overrides.
+"""
 
 from __future__ import annotations
 
@@ -16,6 +21,8 @@ def _candidate_bins(env_key: str, names: list[str]) -> list[str]:
     if override:
         found.append(override)
     for directory in (
+        "/opt/homebrew/opt/ffmpeg-full/bin",
+        "/usr/local/opt/ffmpeg-full/bin",
         "/opt/homebrew/bin",
         "/usr/local/bin",
         "/home/linuxbrew/.linuxbrew/bin",
@@ -37,6 +44,18 @@ def _candidate_bins(env_key: str, names: list[str]) -> list[str]:
 
 def _has_subtitle_filter(ffmpeg_path: str) -> bool:
     try:
+        # More reliable than scraping -filters on some builds.
+        help_result = subprocess.run(
+            [ffmpeg_path, "-hide_banner", "-h", "filter=subtitles"],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        help_text = f"{help_result.stdout}\n{help_result.stderr}"
+        if "Unknown filter" in help_text or "not found" in help_text.lower():
+            return False
+        if "subtitles" in help_text and "Filter subtitles" in help_text or re.search(r"subtitles AVOptions", help_text):
+            return True
         result = subprocess.run(
             [ffmpeg_path, "-hide_banner", "-filters"],
             text=True,
@@ -46,7 +65,7 @@ def _has_subtitle_filter(ffmpeg_path: str) -> bool:
     except OSError:
         return False
     text = f"{result.stdout}\n{result.stderr}"
-    return bool(re.search(r"\bsubtitles\b", text))
+    return bool(re.search(r"(?m)^\s*\S*\s+subtitles\s+", text) or re.search(r"\bsubtitles\b.*libass", text))
 
 
 @lru_cache(maxsize=1)
@@ -71,15 +90,17 @@ def ffprobe_bin() -> str:
 
 
 def require_caption_ffmpeg() -> str:
+    # Bust cache so newly installed ffmpeg-full is visible in-process.
+    ffmpeg_bin.cache_clear()
+    ffprobe_bin.cache_clear()
     binary = ffmpeg_bin()
     if not _has_subtitle_filter(binary):
         raise RuntimeError(
             f"FFmpeg at {binary!r} lacks the libass 'subtitles' filter.\n"
-            "Your conda/base ffmpeg is often the problem. Do this:\n"
-            "  brew install ffmpeg\n"
-            "  export PATH=\"/opt/homebrew/bin:$PATH\"\n"
-            "  export FFMPEG_BINARY=/opt/homebrew/bin/ffmpeg\n"
-            "  export FFPROBE_BINARY=/opt/homebrew/bin/ffprobe\n"
+            "On modern Homebrew, plain `ffmpeg` is a lite build. Install the full one:\n"
+            "  brew install ffmpeg-full\n"
+            "  export FFMPEG_BINARY=/opt/homebrew/opt/ffmpeg-full/bin/ffmpeg\n"
+            "  export FFPROBE_BINARY=/opt/homebrew/opt/ffmpeg-full/bin/ffprobe\n"
             "Then rerun the clipfactory command."
         )
     return binary
