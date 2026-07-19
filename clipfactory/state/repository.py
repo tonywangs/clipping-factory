@@ -54,6 +54,9 @@ class StateRepository(ABC):
     def claim_niche_run(self, source_id: str, external_id: str, niche: str) -> bool: ...
 
     @abstractmethod
+    def reset_niche_run(self, source_id: str, external_id: str, niche: str) -> None: ...
+
+    @abstractmethod
     def finish_niche_run(self, source_id: str, external_id: str, niche: str, status: str, error: str | None = None) -> None: ...
 
     @abstractmethod
@@ -130,6 +133,13 @@ class SQLiteState(StateRepository):
           (source_id, external_id, niche, now()))
         self.conn.commit()
         return True
+
+    def reset_niche_run(self, source_id: str, external_id: str, niche: str) -> None:
+        self.conn.execute(
+            "DELETE FROM niche_runs WHERE source_id=? AND external_id=? AND niche=?",
+            (source_id, external_id, niche),
+        )
+        self.conn.commit()
 
     def finish_niche_run(self, source_id: str, external_id: str, niche: str, status: str, error: str | None = None) -> None:
         self.conn.execute(
@@ -215,6 +225,9 @@ class FirestoreState(StateRepository):
             tx.set(ref, {"status": "running", "updated_at": now()}, merge=True)
             return True
         return claim(transaction)
+
+    def reset_niche_run(self, source_id: str, external_id: str, niche: str) -> None:
+        self.client.collection("niche_runs").document(f"{source_id}:{external_id}:{niche}").delete()
 
     def finish_niche_run(self, source_id: str, external_id: str, niche: str, status: str, error: str | None = None) -> None:
         self.client.collection("niche_runs").document(f"{source_id}:{external_id}:{niche}").set({"status": status, "error": error, "updated_at": now()}, merge=True)

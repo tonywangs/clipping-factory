@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sys
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -21,9 +22,23 @@ from .transcribe import transcribe
 from .transcribe.service import media_content_hash
 
 
-def process_episode(episode: Episode, niche_name: str, settings, state) -> tuple[list[dict], dict]:
+def process_episode(
+    episode: Episode,
+    niche_name: str,
+    settings,
+    state,
+    *,
+    force: bool = False,
+) -> tuple[list[dict], dict]:
     niche = load_niche(niche_name)
+    if force:
+        state.reset_niche_run(episode.source_id, episode.external_id, niche.name)
     if not state.claim_niche_run(episode.source_id, episode.external_id, niche.name):
+        print(
+            f"Skipping {episode.source_id}/{episode.external_id} for niche {niche.name}: "
+            "already completed or running. Re-run with --force to process again.",
+            file=sys.stderr,
+        )
         return [], {"input_tokens": 0, "output_tokens": 0}
     root = project_root()
     storage = build_storage(settings.storage_backend, os.getenv("GCS_BUCKET"))
@@ -121,6 +136,11 @@ def main(argv: list[str] | None = None) -> None:
     mode.add_argument("--once", action="store_true", help="Discover and process new configured episodes")
     mode.add_argument("--episode", help="YouTube URL or local media path")
     parser.add_argument("--niche", help="Niche required with --episode")
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Reprocess even if this episode/niche was already completed",
+    )
     args = parser.parse_args(argv)
     settings = load_settings()
     state = build_state(settings.state_backend, os.getenv("FIRESTORE_PROJECT"))
@@ -151,7 +171,7 @@ def main(argv: list[str] | None = None) -> None:
             video=True,
             license_status=LicenseStatus.UNLICENSED,
         )
-    clips, usage = process_episode(episode, args.niche, settings, state)
+    clips, usage = process_episode(episode, args.niche, settings, state, force=args.force)
     cost = estimate_cost_usd(TokenUsage(**usage), settings.costs_per_million_tokens)
     print(json.dumps({"clips": clips, "token_usage": usage, "cost_estimate_usd": cost}, indent=2))
 
