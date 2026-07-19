@@ -78,7 +78,7 @@ def _call_provider(prompt: str, provider: str | None = None) -> tuple[str, Token
 
         client = Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
         response = client.messages.create(
-            model=os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-20250514"),
+            model=os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-6"),
             max_tokens=4096,
             temperature=0.2,
             messages=[{"role": "user", "content": prompt}],
