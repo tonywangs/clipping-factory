@@ -44,18 +44,20 @@ def _candidate_bins(env_key: str, names: list[str]) -> list[str]:
 
 def _has_subtitle_filter(ffmpeg_path: str) -> bool:
     try:
-        # More reliable than scraping -filters on some builds.
         help_result = subprocess.run(
             [ffmpeg_path, "-hide_banner", "-h", "filter=subtitles"],
             text=True,
             capture_output=True,
             check=False,
         )
-        help_text = f"{help_result.stdout}\n{help_result.stderr}"
-        if "Unknown filter" in help_text or "not found" in help_text.lower():
-            return False
-        if "subtitles" in help_text and "Filter subtitles" in help_text or re.search(r"subtitles AVOptions", help_text):
-            return True
+    except OSError:
+        return False
+    help_text = f"{help_result.stdout}\n{help_result.stderr}"
+    if re.search(r"Unknown filter|not found", help_text, re.I):
+        return False
+    if "subtitles AVOptions" in help_text or "Filter subtitles" in help_text:
+        return True
+    try:
         result = subprocess.run(
             [ffmpeg_path, "-hide_banner", "-filters"],
             text=True,
@@ -65,7 +67,7 @@ def _has_subtitle_filter(ffmpeg_path: str) -> bool:
     except OSError:
         return False
     text = f"{result.stdout}\n{result.stderr}"
-    return bool(re.search(r"(?m)^\s*\S*\s+subtitles\s+", text) or re.search(r"\bsubtitles\b.*libass", text))
+    return bool(re.search(r"(?m)^\s*\S*\s+subtitles\s+", text))
 
 
 @lru_cache(maxsize=1)
@@ -90,7 +92,6 @@ def ffprobe_bin() -> str:
 
 
 def require_caption_ffmpeg() -> str:
-    # Bust cache so newly installed ffmpeg-full is visible in-process.
     ffmpeg_bin.cache_clear()
     ffprobe_bin.cache_clear()
     binary = ffmpeg_bin()
