@@ -131,6 +131,7 @@ class Candidate(BaseModel):
 
 class ClipMeta(BaseModel):
     clip_id: str
+    run_id: str
     niche: str
     source_id: str
     external_id: str
@@ -148,6 +149,7 @@ class ClipMeta(BaseModel):
     virality_reason: str
     caption_style: CaptionStyle
     music_track: str | None = None
+    tags: list[str] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=utcnow)
 
 

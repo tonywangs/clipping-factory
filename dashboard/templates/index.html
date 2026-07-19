@@ -1,3 +1,72 @@
 <!doctype html>
-<html><head><meta charset="utf-8"><title>ClipFactory Review</title><script src="https://unpkg.com/htmx.org@2.0.4"></script><style>body{font:15px system-ui;margin:24px;background:#f7f8f9;color:#18212b}main{max-width:1120px;margin:auto}.clip{display:grid;grid-template-columns:220px 1fr;gap:18px;border-top:1px solid #d5dadd;padding:18px 0}video{width:220px;aspect-ratio:9/16;background:#111}button{padding:8px 12px;border:1px solid #88929d;background:white;border-radius:4px}.warn{color:#b04900;font-weight:700}textarea{width:100%;max-width:560px;height:45px}</style></head>
-<body><main><h1>ClipFactory Review</h1><p>{% for item in niches %}<a href="/?niche={{ item }}">{{ item }}</a>{% if not loop.last %} · {% endif %}{% endfor %}</p>{% for clip in clips %}<article class="clip" id="{{ clip.clip_id }}"><video controls src="/media/{{ clip.directory.relative_to(root) }}/clip.mp4"></video><section><h2>{{ clip.meta.title }} <small>{{ clip.meta.score }}/100</small></h2>{% if clip.meta.license_status == 'unlicensed' %}<p class="warn">Unlicensed source: posting is at your own risk.</p>{% endif %}<p>{{ clip.meta.caption }} {{ clip.meta.hashtags | join(' ') }}</p><p><b>Hook:</b> {{ clip.meta.hook_sentence }}</p><button onclick="navigator.clipboard.writeText({{ (clip.meta.caption ~ ' ' ~ (clip.meta.hashtags | join(' '))) | tojson }})">Copy caption</button><button hx-post="/clips/{{ clip.clip_id }}/approved" hx-target="#{{ clip.clip_id }}" hx-swap="outerHTML">Approve</button><form hx-post="/clips/{{ clip.clip_id }}/rejected" hx-target="#{{ clip.clip_id }}" hx-swap="outerHTML"><textarea required name="reason" placeholder="Reason for rejection"></textarea><button>Reject</button></form></section></article>{% else %}<p>No clips in the outbox.</p>{% endfor %}</main></body></html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>ClipFactory Review</title>
+  <script src="https://unpkg.com/htmx.org@2.0.4"></script>
+  <style>
+    body{font:15px system-ui;margin:24px;background:#f7f8f9;color:#18212b}
+    main{max-width:1120px;margin:auto}
+    .clip{display:grid;grid-template-columns:220px 1fr;gap:18px;border-top:1px solid #d5dadd;padding:18px 0}
+    video{width:220px;aspect-ratio:9/16;background:#111}
+    button{padding:8px 12px;border:1px solid #88929d;background:white;border-radius:4px}
+    .warn{color:#b04900;font-weight:700}
+    textarea{width:100%;max-width:560px;height:45px}
+    .filters a{margin-right:8px;text-decoration:none;color:#234}
+    .filters a.active{font-weight:700;border-bottom:2px solid #234}
+    .tag{display:inline-block;background:#e8eef5;border-radius:4px;padding:2px 8px;margin:0 4px 4px 0;font-size:12px}
+    .run{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;color:#445}
+    .muted{color:#667}
+  </style>
+</head>
+<body>
+<main>
+  <h1>ClipFactory Review</h1>
+  <p class="muted">Defaults to the latest run. Older runs stay available via the filters below.</p>
+
+  <p class="filters"><b>Niche:</b>
+    <a class="{% if not selected_niche %}active{% endif %}" href="/?run={{ selected_run or 'all' }}">all</a>
+    {% for item in niches %}
+      <a class="{% if selected_niche == item %}active{% endif %}" href="/?niche={{ item }}&run={{ selected_run or 'all' }}">{{ item }}</a>
+    {% endfor %}
+  </p>
+
+  <p class="filters"><b>Run:</b>
+    <a class="{% if selected_run == 'all' %}active{% endif %}" href="/?{% if selected_niche %}niche={{ selected_niche }}&{% endif %}run=all">all runs</a>
+    {% for item in runs %}
+      <a class="{% if selected_run == item.run_id %}active{% endif %}" href="/?{% if selected_niche %}niche={{ selected_niche }}&{% endif %}run={{ item.run_id }}">{{ item.run_id }} ({{ item.count }})</a>
+    {% endfor %}
+  </p>
+
+  {% if selected_run and selected_run != 'all' %}
+    <p>Showing run <span class="run">{{ selected_run }}</span></p>
+  {% endif %}
+
+  {% for clip in clips %}
+  <article class="clip" id="{{ clip.clip_id }}">
+    <video controls src="/media/{{ clip.directory.relative_to(root) }}/clip.mp4"></video>
+    <section>
+      <h2>{{ clip.meta.title }} <small>{{ clip.meta.score }}/100</small></h2>
+      <p class="run">run: {{ clip.run_id }}</p>
+      {% if clip.meta.tags %}
+        <p>{% for tag in clip.meta.tags %}<span class="tag">{{ tag }}</span>{% endfor %}</p>
+      {% endif %}
+      {% if clip.meta.license_status == 'unlicensed' %}
+        <p class="warn">Unlicensed source: posting is at your own risk.</p>
+      {% endif %}
+      <p>{{ clip.meta.caption }} {{ clip.meta.hashtags | join(' ') }}</p>
+      <p><b>Hook:</b> {{ clip.meta.hook_sentence }}</p>
+      <button onclick="navigator.clipboard.writeText({{ (clip.meta.caption ~ ' ' ~ (clip.meta.hashtags | join(' '))) | tojson }})">Copy caption</button>
+      <button hx-post="/clips/{{ clip.clip_id }}/approved" hx-target="#{{ clip.clip_id }}" hx-swap="outerHTML">Approve</button>
+      <form hx-post="/clips/{{ clip.clip_id }}/rejected" hx-target="#{{ clip.clip_id }}" hx-swap="outerHTML">
+        <textarea required name="reason" placeholder="Reason for rejection"></textarea>
+        <button>Reject</button>
+      </form>
+    </section>
+  </article>
+  {% else %}
+  <p>No clips for this filter.</p>
+  {% endfor %}
+</main>
+</body>
+</html>
