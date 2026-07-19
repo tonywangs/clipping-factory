@@ -37,3 +37,9 @@ the ranker reads for rejection feedback.
 ## 2026-07-17: YouTube discovery
 When `YOUTUBE_API_KEY` is set, discovery prefers the YouTube Data API for channel
 handles, channel IDs, and playlists, then falls back to yt-dlp flat playlists.
+
+## 2026-07-19: self-contained clips + dual framing
+Ranker prompt requires zero-prior-context openings and pulls start back to a nearby
+host question when present. Reframing detects stable left/right two-face layouts and
+uses a stacked 9:16 split; otherwise single-face tracking uses a snap cooldown so
+the crop does not thrash between host and guest.

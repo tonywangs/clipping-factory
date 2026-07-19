@@ -1,6 +1,6 @@
 from clipfactory.ids import make_clip_id
 from clipfactory.models import Candidate, CaptionStyle, ClipLength, NicheConfig, Transcript, TranscriptSegment, Word
-from clipfactory.rank import chunk_transcript, estimate_cost_usd, rank_candidates, snap_to_words
+from clipfactory.rank import chunk_transcript, estimate_cost_usd, expand_for_context, rank_candidates, snap_to_words
 from clipfactory.rank.service import TokenUsage
 
 
@@ -79,3 +79,19 @@ def test_estimate_cost():
 def test_clip_id_stable():
     assert make_clip_id("a", "b", "startup", 1.0, 2.0) == make_clip_id("a", "b", "startup", 1.0, 2.0)
     assert make_clip_id("a", "b", "startup", 1.0, 2.0) != make_clip_id("a", "c", "startup", 1.0, 2.0)
+
+
+def test_expand_for_context_includes_host_question():
+    t = Transcript(
+        duration=40,
+        segments=[
+            TranscriptSegment(start=8, end=12, text="Why did you leave?", words=[]),
+            TranscriptSegment(start=12, end=30, text="Because growth taxed every hire.", words=[]),
+        ],
+    )
+    expanded = expand_for_context(
+        Candidate(start=12.5, end=30, score=90, title="t", hook_sentence="h", virality_reason="r"),
+        t,
+        max_seconds=40,
+    )
+    assert expanded.start == 8
