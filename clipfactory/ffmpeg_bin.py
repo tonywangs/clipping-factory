@@ -7,6 +7,7 @@ import re
 import shutil
 import subprocess
 from functools import lru_cache
+from pathlib import Path
 
 
 def _candidate_bins(env_key: str, names: list[str]) -> list[str]:
@@ -14,20 +15,19 @@ def _candidate_bins(env_key: str, names: list[str]) -> list[str]:
     override = os.getenv(env_key, "").strip()
     if override:
         found.append(override)
-    for path in (
+    for directory in (
         "/opt/homebrew/bin",
         "/usr/local/bin",
         "/home/linuxbrew/.linuxbrew/bin",
     ):
         for name in names:
-            candidate = f"{path}/{name}"
+            candidate = f"{directory}/{name}"
             if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
                 found.append(candidate)
     for name in names:
         which = shutil.which(name)
         if which:
             found.append(which)
-    # Dedupe, preserve order
     ordered: list[str] = []
     for item in found:
         if item not in ordered:
@@ -35,10 +35,10 @@ def _candidate_bins(env_key: str, names: list[str]) -> list[str]:
     return ordered
 
 
-def _has_subtitle_filter(ffmpeg_bin: str) -> bool:
+def _has_subtitle_filter(ffmpeg_path: str) -> bool:
     try:
         result = subprocess.run(
-            [ffmpeg_bin, "-hide_banner", "-filters"],
+            [ffmpeg_path, "-hide_banner", "-filters"],
             text=True,
             capture_output=True,
             check=False,
@@ -46,7 +46,7 @@ def _has_subtitle_filter(ffmpeg_bin: str) -> bool:
     except OSError:
         return False
     text = f"{result.stdout}\n{result.stderr}"
-    return bool(re.search(r"(?m)^\s*\S*\s+subtitles\s+", text) or re.search(r"\bsubtitles\b", text))
+    return bool(re.search(r"\bsubtitles\b", text))
 
 
 @lru_cache(maxsize=1)
@@ -54,37 +54,14 @@ def ffmpeg_bin() -> str:
     for candidate in _candidate_bins("FFMPEG_BINARY", ["ffmpeg"]):
         if _has_subtitle_filter(candidate):
             return candidate
-    # Last resort: whatever is on PATH, even if captions will fail later with a clear error.
     return shutil.which("ffmpeg") or "ffmpeg"
 
 
 @lru_cache(maxsize=1)
 def ffprobe_bin() -> str:
-    ffmpeg = ffmpeg_bin()
-    probe_override = os.getenv("FFPROBE_BINARY", "").strip()
-    if probe_override:
-        return probe_override
-    sibling = str(PathLike(ffmpeg).with_name("ffprobe")) if False else None  # placeholder
-    # Prefer ffprobe next to the chosen ffmpeg.
-    from pathlib import Path
-
-    neighbor = Path(ffmpeg).with_name("ffprobe")
-    if neighbor.is_file() and os.access(neighbor, os.X_OK):
-        return str(neighbor)
-    for candidate in _candidate_bins("FFPROBE_BINARY", ["ffprobe"]):
-        return candidate
-    return shutil.which("ffprobe") or "ffprobe"
-
-
-# Fix accidental dead code - rewrite cleanly
-from pathlib import Path  # noqa: E402
-
-
-@lru_cache(maxsize=1)
-def ffprobe_bin() -> str:  # type: ignore[no-redef]
-    probe_override = os.getenv("FFPROBE_BINARY", "").strip()
-    if probe_override:
-        return probe_override
+    override = os.getenv("FFPROBE_BINARY", "").strip()
+    if override:
+        return override
     neighbor = Path(ffmpeg_bin()).with_name("ffprobe")
     if neighbor.is_file() and os.access(neighbor, os.X_OK):
         return str(neighbor)
