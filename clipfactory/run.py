@@ -11,9 +11,11 @@ from dotenv import load_dotenv
 from .config import load_niche, load_settings, load_sources, project_root
 from .deliver import notify_summary
 from .discover import discover_sources
+from .ids import make_run_id
 from .ingest import ingest_episode
 from .models import Episode, LicenseStatus
 from .package import package_clip
+from .package.service import write_run_manifest
 from .rank import TokenUsage, estimate_cost_usd, rank_candidates
 from .render import render_clip
 from .state import build_state
@@ -29,8 +31,12 @@ def process_episode(
     state,
     *,
     force: bool = False,
+    run_id: str | None = None,
+    tags: list[str] | None = None,
 ) -> tuple[list[dict], dict]:
     niche = load_niche(niche_name)
+    run_id = run_id or make_run_id()
+    tags = list(tags or [])
     if force:
         state.reset_niche_run(episode.source_id, episode.external_id, niche.name)
     if not state.claim_niche_run(episode.source_id, episode.external_id, niche.name):
@@ -39,7 +45,7 @@ def process_episode(
             "already completed or running. Re-run with --force to process again.",
             file=sys.stderr,
         )
-        return [], {"input_tokens": 0, "output_tokens": 0}
+        return [], {"input_tokens": 0, "output_tokens": 0, "run_id": run_id}
     root = project_root()
     storage = build_storage(settings.storage_backend, os.getenv("GCS_BUCKET"))
 
@@ -49,7 +55,7 @@ def process_episode(
         except ValueError:
             return f"{fallback_prefix}/{path.name}"
 
-    usage = {"input_tokens": 0, "output_tokens": 0}
+    usage = {"input_tokens": 0, "output_tokens": 0, "run_id": run_id}
     try:
         episode = ingest_episode(episode, root / settings.raw_dir, settings.download_max_height)
         if episode.local_path is None:
@@ -69,12 +75,25 @@ def process_episode(
         if transcript_path.exists():
             storage.put_file(transcript_path, str(transcript_path.relative_to(root)))
         ranked = rank_candidates(transcript, niche, state.recent_feedback(niche.name))
-        usage = {"input_tokens": ranked.usage.input_tokens, "output_tokens": ranked.usage.output_tokens}
+        usage = {
+            "input_tokens": ranked.usage.input_tokens,
+            "output_tokens": ranked.usage.output_tokens,
+            "run_id": run_id,
+        }
         produced: list[dict] = []
         for candidate in ranked.candidates:
             temporary = root / settings.work_dir / f"{episode.source_id}_{episode.external_id}_{candidate.start:.3f}.mp4"
             music = render_clip(episode, candidate, transcript, niche, root / settings.work_dir, temporary)
-            package = package_clip(temporary, episode, candidate, niche, root / settings.outbox_dir, music)
+            package = package_clip(
+                temporary,
+                episode,
+                candidate,
+                niche,
+                root / settings.outbox_dir,
+                music,
+                run_id=run_id,
+                tags=tags,
+            )
             for artifact in (package.clip_path, package.cover_path, package.directory / "meta.json"):
                 storage.put_file(artifact, str(artifact.relative_to(root)))
             state.add_clip(
@@ -88,11 +107,27 @@ def process_episode(
             produced.append(
                 {
                     "clip_id": package.clip_id,
+                    "run_id": run_id,
                     "title": package.meta.title,
                     "score": package.meta.score,
                     "path": str(package.directory),
+                    "tags": package.meta.tags,
                 }
             )
+        write_run_manifest(
+            root / settings.outbox_dir,
+            niche.name,
+            run_id,
+            {
+                "source_id": episode.source_id,
+                "external_id": episode.external_id,
+                "episode_title": episode.title,
+                "episode_url": episode.url,
+                "tags": tags,
+                "clips": produced,
+                "token_usage": {"input_tokens": usage["input_tokens"], "output_tokens": usage["output_tokens"]},
+            },
+        )
         state.finish_niche_run(episode.source_id, episode.external_id, niche.name, "completed")
         return produced, usage
     except Exception as exc:
@@ -100,7 +135,8 @@ def process_episode(
         raise
 
 
-def run_once(settings, state) -> dict:
+def run_once(settings, state, *, tags: list[str] | None = None, run_label: str | None = None) -> dict:
+    run_id = make_run_id(run_label)
     sources = load_sources().sources
     source_by_id = {source.id: source for source in sources}
     episodes = discover_sources(sources, state, settings.max_new_episodes_per_run)
@@ -110,7 +146,14 @@ def run_once(settings, state) -> dict:
         source = source_by_id[episode.source_id]
         for niche in source.niches:
             try:
-                produced, usage = process_episode(episode, niche, settings, state)
+                produced, usage = process_episode(
+                    episode,
+                    niche,
+                    settings,
+                    state,
+                    run_id=run_id,
+                    tags=tags,
+                )
                 clips.extend(produced)
                 total_usage["input_tokens"] += usage["input_tokens"]
                 total_usage["output_tokens"] += usage["output_tokens"]
@@ -118,6 +161,8 @@ def run_once(settings, state) -> dict:
                 errors.append({"source_id": episode.source_id, "episode": episode.title, "niche": niche, "error": str(exc)})
     cost = estimate_cost_usd(TokenUsage(**total_usage), settings.costs_per_million_tokens)
     summary = {
+        "run_id": run_id,
+        "tags": list(tags or []),
         "episodes_discovered": len(episodes),
         "clips": clips,
         "errors": errors,
@@ -141,11 +186,23 @@ def main(argv: list[str] | None = None) -> None:
         action="store_true",
         help="Reprocess even if this episode/niche was already completed",
     )
+    parser.add_argument(
+        "--tag",
+        action="append",
+        default=[],
+        help="Tag this run (repeatable), e.g. --tag framing-v2 --tag context-fix",
+    )
+    parser.add_argument(
+        "--run-label",
+        default=None,
+        help="Optional short label embedded in run_id, e.g. framing-v2",
+    )
     args = parser.parse_args(argv)
     settings = load_settings()
     state = build_state(settings.state_backend, os.getenv("FIRESTORE_PROJECT"))
+    tags = list(args.tag or [])
     if args.once:
-        print(json.dumps(run_once(settings, state), indent=2))
+        print(json.dumps(run_once(settings, state, tags=tags, run_label=args.run_label), indent=2))
         return
     if not args.niche:
         parser.error("--niche is required with --episode")
@@ -171,9 +228,35 @@ def main(argv: list[str] | None = None) -> None:
             video=True,
             license_status=LicenseStatus.UNLICENSED,
         )
-    clips, usage = process_episode(episode, args.niche, settings, state, force=args.force)
-    cost = estimate_cost_usd(TokenUsage(**usage), settings.costs_per_million_tokens)
-    print(json.dumps({"clips": clips, "token_usage": usage, "cost_estimate_usd": cost}, indent=2))
+    run_id = make_run_id(args.run_label)
+    clips, usage = process_episode(
+        episode,
+        args.niche,
+        settings,
+        state,
+        force=args.force,
+        run_id=run_id,
+        tags=tags,
+    )
+    cost = estimate_cost_usd(
+        TokenUsage(input_tokens=usage["input_tokens"], output_tokens=usage["output_tokens"]),
+        settings.costs_per_million_tokens,
+    )
+    print(
+        json.dumps(
+            {
+                "run_id": run_id,
+                "tags": tags,
+                "clips": clips,
+                "token_usage": {
+                    "input_tokens": usage["input_tokens"],
+                    "output_tokens": usage["output_tokens"],
+                },
+                "cost_estimate_usd": cost,
+            },
+            indent=2,
+        )
+    )
 
 
 if __name__ == "__main__":

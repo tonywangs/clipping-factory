@@ -31,9 +31,18 @@ with `base` and int8 defaults.
 
 ## Review and feedback
 
-Open `http://localhost:8000` after `make dashboard`. Approving moves a package into
-`approved/`; rejecting requires a reason, moves it into `rejected/`, and appends feedback
-used by later ranking prompts. The dashboard marks `unlicensed` clips clearly.
+Open `http://localhost:8000` after `make dashboard`. The dashboard **defaults to the
+latest run** so older experiments do not clutter review. Filter by niche/run, or choose
+**all runs**. Approving moves a package into `approved/`; rejecting requires a reason,
+moves it into `rejected/`, and appends feedback used by later ranking prompts.
+
+Clips land in `outbox/<niche>/<run_id>/<slug>/` with `run_id` + optional tags in
+`meta.json`. Tag a run when you launch it:
+
+```bash
+uv run python -m clipfactory.run --episode URL --niche startup --force \
+  --run-label framing-v2 --tag framing-v2 --tag context-fix
+```
 
 ## Storage and cloud
 
