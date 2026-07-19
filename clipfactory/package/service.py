@@ -4,6 +4,7 @@ import re
 import subprocess
 from pathlib import Path
 
+from ..ffmpeg_bin import ffmpeg_bin
 from ..ids import make_clip_id
 from ..models import Candidate, ClipMeta, Episode, NicheConfig, ProducedClip
 
@@ -21,7 +22,7 @@ def package_clip(source: Path, episode: Episode, candidate: Candidate, niche: Ni
     cover_path = directory / "cover.jpg"
     hook_offset = min(1.0, max(0.0, (candidate.end - candidate.start) * 0.15))
     subprocess.run(
-        ["ffmpeg", "-y", "-ss", f"{hook_offset:.3f}", "-i", str(clip_path), "-frames:v", "1", "-q:v", "2", str(cover_path)],
+        [ffmpeg_bin(), "-y", "-ss", f"{hook_offset:.3f}", "-i", str(clip_path), "-frames:v", "1", "-q:v", "2", str(cover_path)],
         check=True,
         capture_output=True,
     )
