@@ -108,30 +108,9 @@ def _reframe(episode: Episode, candidate: Candidate, target: Path, accent: str) 
         _audio_visual(episode.local_path, target, duration, accent)
         return
     try:
-        from engine.local.clipper import crop_clip_local
+        from .framing import reframe_podcast_clip
 
-        crop_clip_local(str(episode.local_path), candidate.start, candidate.end, "9:16", str(target))
-        normalized = target.with_suffix(".normalized.mp4")
-        _run(
-            [
-                ffmpeg_bin(),
-                "-y",
-                "-i",
-                str(target),
-                "-vf",
-                "scale=1080:1920",
-                "-c:v",
-                "libx264",
-                "-crf",
-                "20",
-                "-c:a",
-                "aac",
-                "-b:a",
-                "192k",
-                str(normalized),
-            ]
-        )
-        normalized.replace(target)
+        reframe_podcast_clip(episode.local_path, candidate.start, candidate.end, target)
     except Exception:
         cut = target.with_suffix(".cut.mp4")
         _run(

@@ -41,7 +41,7 @@ def _transcript_text(segments: list[TranscriptSegment]) -> str:
 
 
 def _prompt(segments: list[TranscriptSegment], niche: NicheConfig, feedback: list[str]) -> str:
-    return f"""You are an elite short-form video editor. Select viral, self-contained clips.
+    return f"""You are an elite short-form video editor for podcast clips on TikTok/Reels.
 Audience: {niche.audience}
 Tone: {niche.tone}
 Prioritize: {', '.join(niche.prioritize_topics) or 'strong useful moments'}
@@ -50,8 +50,15 @@ Banned words: {', '.join(niche.banned_words) or 'none'}
 Length: {niche.clip_length_seconds.min}-{niche.clip_length_seconds.max} seconds.
 Example hooks: {json.dumps(niche.example_hooks)}
 Recent rejected-clip guidance (avoid repeating these failures): {json.dumps(feedback[-20:])}
-Score viral potential 0-100. Seek hooks, emotional peaks, opinion bombs, revelations,
-conflict, quotable lines, story peaks, and practical value. Do not cut mid-thought.
+
+CRITICAL — every clip must make sense with ZERO prior context:
+1. Prefer moments that open with a clear claim, story beat, or the host's question that sets up the punchline.
+2. If the best line is an answer, INCLUDE the question/setup immediately before it (even if that means starting earlier).
+3. Reject clips that start mid-explanation with vague pronouns ("it", "that", "they") and no referent.
+4. Technical/jargon-heavy answers are only good if the first 3 seconds tell a non-expert what is being claimed.
+5. Do not cut mid-sentence or mid-thought. End on a complete payoff.
+6. Seek hooks, opinion bombs, revelations, conflict, quotables, story peaks, practical value.
+
 Return 5-8 hashtags mixing niche staples and episode-specific tags.
 Return JSON only: {{"highlights":[{{"start":number,"end":number,"score":integer,"title":string,"hook_sentence":string,"virality_reason":string,"suggested_caption":string,"hashtags":[string]}}]}}.
 
@@ -132,6 +139,34 @@ def chunk_transcript(transcript: Transcript) -> list[tuple[float, list[Transcrip
             break
         start += CHUNK_SIZE_SECONDS - CHUNK_OVERLAP_SECONDS
     return chunks or [(0.0, transcript.segments)]
+
+
+CONTEXT_LOOKBACK_SECONDS = 14.0
+
+
+def expand_for_context(candidate: Candidate, transcript: Transcript, max_seconds: float) -> Candidate:
+    """If a host question/setup sits just before the clip, pull the start back to include it."""
+    limit = max(0.0, candidate.start - CONTEXT_LOOKBACK_SECONDS)
+    setup: TranscriptSegment | None = None
+    for segment in transcript.segments:
+        if segment.end <= limit or segment.start >= candidate.start:
+            continue
+        text = segment.text.strip()
+        if not text:
+            continue
+        if "?" in text or re.search(r"\b(why|how|what|when|who|can you|tell me|do you)\b", text, re.I):
+            setup = segment
+            break
+    if setup is None:
+        return candidate
+    new_start = setup.start
+    # Keep under max duration; if too long, keep as much setup as fits.
+    max_end_span = min(max_seconds, 60)
+    if candidate.end - new_start > max_end_span:
+        new_start = max(setup.start, candidate.end - max_end_span)
+    if new_start >= candidate.start:
+        return candidate
+    return candidate.model_copy(update={"start": round(new_start, 3)})
 
 
 def snap_to_words(candidate: Candidate, transcript: Transcript, min_seconds: float, max_seconds: float) -> Candidate | None:
@@ -223,7 +258,13 @@ def rank_candidates(
     for item in collected:
         if item.score < niche.min_score:
             continue
-        fixed = snap_to_words(item, transcript, niche.clip_length_seconds.min, niche.clip_length_seconds.max)
+        with_context = expand_for_context(item, transcript, niche.clip_length_seconds.max)
+        fixed = snap_to_words(
+            with_context,
+            transcript,
+            niche.clip_length_seconds.min,
+            niche.clip_length_seconds.max,
+        )
         if fixed:
             snapped.append(_normalize_hashtags(fixed, niche))
     return RankResult(candidates=_dedupe(snapped)[: niche.clips_per_episode], usage=usage)
