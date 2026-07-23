@@ -38,6 +38,17 @@ the ranker reads for rejection feedback.
 When `YOUTUBE_API_KEY` is set, discovery prefers the YouTube Data API for channel
 handles, channel IDs, and playlists, then falls back to yt-dlp flat playlists.
 
+## 2026-07-23: content creation suite
+`clipfactory/formats/` adds five generated formats (history POV, ASMR sequencer,
+ranked polls, mood montages, fancam edits) behind `python -m clipfactory.create`.
+Shared ffmpeg helpers live in `formats/base.py`; all formats reuse the podcast
+outbox/meta/dashboard pipeline. TTS prefers OpenAI then free edge-tts. Image
+generation prefers operator folders, then OpenAI images, then styled text cards
+so builds never hard-fail. ASMR/montage source media is operator-supplied
+(AI-video exports / rights-cleared b-roll); no copyrighted music is downloaded,
+and fancam/montage outputs are stamped `unlicensed` where third-party media is
+involved. Transition SFX is synthesized with ffmpeg when no assets exist.
+
 ## 2026-07-19: self-contained clips + dual framing
 Ranker prompt requires zero-prior-context openings and pulls start back to a nearby
 host question when present. Reframing detects stable left/right two-face layouts and
