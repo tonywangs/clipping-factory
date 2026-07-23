@@ -16,6 +16,7 @@ class LicenseStatus(StrEnum):
     CAMPAIGN_LICENSED = "campaign_licensed"
     CLIPPING_ENCOURAGED = "clipping_encouraged"
     UNLICENSED = "unlicensed"
+    ORIGINAL = "original"  # generated in-house (AI narration, own assets)
 
 
 class SourceType(StrEnum):

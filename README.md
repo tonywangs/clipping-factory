@@ -1,8 +1,25 @@
 # ClipFactory
 
-ClipFactory finds long-form podcast episodes, transcribes them with word timings, ranks
-high-retention moments, renders captioned vertical clips, and places them in a reviewable
-outbox. Posting is intentionally manual.
+ClipFactory is a viral short-form content factory. It started as a podcast clipper —
+find episodes, transcribe with word timings, rank high-retention moments, render
+captioned vertical clips — and now also generates original TikTok formats end to end.
+Posting is intentionally manual.
+
+## Content formats (`python -m clipfactory.create ...`)
+
+| Format | Command | Needs |
+|---|---|---|
+| AI history POV ("day in the life of a victorian child") | `create history --topic "..."` | LLM key; TTS (OpenAI key or free edge-tts); images auto-generate with OpenAI key, else styled cards |
+| Glass-fruit ASMR | `create asmr --collection glass-fruit` | AI video clips you export into `assets/broll/asmr/glass-fruit/` |
+| "Which bedroom would you sleep in the hardest" polls | `create poll --topic "..."` | LLM key; images same as history |
+| Sad-music scenery montage (NYC rain) | `create montage --collection nyc-rain --mood sad` | b-roll in `assets/broll/nyc-rain/`, tracks in `assets/music/moods/sad/` (or `--no-music`, add sound in TikTok) |
+| Fancam edits ("maddie ziegler attitude", loud booms) | `create fancam --source ep.mp4 --subject "maddie ziegler"` | a source video; moments auto-found via transcript or `--moments "12-15,40-44"` |
+
+All formats land in the same `outbox/<niche>/<run_id>/` structure with `meta.json`,
+so the review dashboard, run filters, and approve/reject flow work unchanged.
+Generated content is stamped `license_status: original`; fancam/montage using
+others' footage or commercial music is stamped `unlicensed` and flagged in the
+dashboard.
 
 ## Local setup
 
