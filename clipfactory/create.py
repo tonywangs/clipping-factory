@@ -226,6 +226,9 @@ def cmd_scenery(args, run_id: str, work: Path) -> dict:
         seconds=args.seconds,
         music_start=args.music_start,
         music_db=args.music_db,
+        video_provider=args.video_provider,
+        modal_model=args.modal_model,
+        seed=args.seed,
     )
     campaign_tags = [
         f"campaign:{args.campaign}",
@@ -331,6 +334,19 @@ def main(argv: list[str] | None = None) -> None:
         choices=["auto", "openai", "gemini"],
         default="auto",
     )
+    p_scenery.add_argument(
+        "--video-provider",
+        choices=["modal-wan", "image"],
+        default="modal-wan",
+        help="Real Wan 2.2 video on Modal (default), or legacy image zoom",
+    )
+    p_scenery.add_argument(
+        "--modal-model",
+        choices=["wan-5b", "wan-a14b"],
+        default="wan-5b",
+        help="wan-5b: practical H100; wan-a14b: slow max-quality H200",
+    )
+    p_scenery.add_argument("--seed", type=int, default=0)
     p_scenery.add_argument("--seconds", type=float, default=10.0)
     p_scenery.add_argument(
         "--music-start",

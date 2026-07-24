@@ -43,6 +43,7 @@ class SceneryPlan:
     title: str
     image_prompt: str
     caption: str
+    video_prompt: str = ""
     hashtags: list[str] = field(default_factory=list)
 
 
@@ -56,6 +57,9 @@ Return JSON only:
 {{"title": string (short internal title),
 "image_prompt": string (extremely vivid vertical 9:16 cinematic scenery prompt;
 no people, no text, no logos; describe lighting, weather, depth, atmosphere),
+"video_prompt": string (describe actual continuous physical motion in the scene:
+flowing water, drifting fog, moving clouds, swaying leaves, subtle camera movement;
+one unbroken shot, no cuts, no people, no text),
 "caption": string (very short aesthetic caption; no fake claims),
 "hashtags": [string] (5-8 scenery/aesthetic/discovery tags)}}"""
 
@@ -79,6 +83,7 @@ def plan_scenery(
             title=str(data.get("title") or concept).strip(),
             image_prompt=str(data.get("image_prompt") or concept).strip(),
             caption=str(data.get("caption") or concept).strip(),
+            video_prompt=str(data.get("video_prompt") or "").strip(),
             hashtags=[str(tag) for tag in data.get("hashtags", [])]
             or ["#scenery", "#aesthetic", "#nature", "#fyp"],
         ),
@@ -196,6 +201,61 @@ def _resolve_visual(
     return render_panel(Panel(duration=seconds, image=image), work / "visual.mp4"), image_provider
 
 
+def _resolve_keyframe(
+    plan: SceneryPlan,
+    work: Path,
+    *,
+    source: Path | None,
+    image_provider: str,
+    progress: Progress,
+) -> tuple[Path, str]:
+    """Resolve an initial image for remote image-to-video generation."""
+    if source is not None:
+        source = source.expanduser().resolve()
+        if not source.exists():
+            raise FileNotFoundError(f"Scenery source not found: {source}")
+        if source.suffix.lower() in IMAGE_KINDS:
+            progress.emit(f"Using supplied keyframe: {source.name}")
+            return source, str(source)
+        if source.suffix.lower() in VIDEO_KINDS:
+            keyframe = work / "source_keyframe.png"
+            progress.emit(f"Extracting a keyframe from supplied video: {source.name}")
+            run(
+                [
+                    ffmpeg_bin(),
+                    "-y",
+                    "-loglevel",
+                    "error",
+                    "-i",
+                    str(source),
+                    "-frames:v",
+                    "1",
+                    str(keyframe),
+                ]
+            )
+            return keyframe, str(source)
+        raise ValueError(f"Unsupported scenery source type: {source.suffix}")
+
+    progress.emit(f"Generating the initial scenery keyframe ({image_provider})…")
+    image = generate_image(
+        plan.image_prompt,
+        work / "scenery_keyframe.png",
+        provider=image_provider,
+        style_suffix=(
+            ", cinematic atmospheric photography, immense depth, subtle volumetric "
+            "lighting, ultra detailed, vertical 9:16 composition, no people, no text, "
+            "no watermark, no logo"
+        ),
+    )
+    if image is None:
+        raise RuntimeError(
+            "Scenery keyframe generation failed. Verify OPENAI_API_KEY or "
+            "GEMINI_API_KEY, try --image-provider openai|gemini, or pass "
+            "--source /path/to/image-or-video."
+        )
+    return image, image_provider
+
+
 def build_scenery_promo(
     concept: str,
     work: Path,
@@ -208,6 +268,9 @@ def build_scenery_promo(
     seconds: float = 10.0,
     music_start: float = 0.0,
     music_db: float = -2.0,
+    video_provider: str = "modal-wan",
+    modal_model: str = "wan-5b",
+    seed: int = 0,
 ) -> tuple[Path, SceneryPlan, LLMUsage, Path, str]:
     if seconds < 3 or seconds > 60:
         raise ValueError("--seconds must be between 3 and 60")
@@ -218,6 +281,47 @@ def build_scenery_promo(
     plan, usage = plan_scenery(concept, campaign=campaign, artist=artist)
     progress.emit(f"Plan ready: {plan.title}")
 
+    track = resolve_promo_music(music, campaign)
+    attribution = track_attribution(track)
+    if attribution:
+        plan.caption = f"{plan.caption}\n\n{attribution}"
+        progress.emit("Required CC attribution added to the TikTok caption")
+
+    if video_provider == "modal-wan":
+        keyframe, visual_source = _resolve_keyframe(
+            plan,
+            work,
+            source=source,
+            image_provider=image_provider,
+            progress=progress,
+        )
+        video_prompt = plan.video_prompt or (
+            f"{plan.image_prompt}. Real continuous movement: drifting fog, moving "
+            "clouds, flowing water and gently swaying vegetation as appropriate. "
+            "Slow cinematic camera drift, one unbroken shot, no cuts, no text."
+        )
+        progress.emit(
+            f"Sending keyframe + prompt to Modal ({modal_model}); your Mac will stay cool…"
+        )
+        from ..modal_video import generate_modal_wan
+
+        final = generate_modal_wan(
+            image=keyframe,
+            music=track,
+            prompt=video_prompt,
+            target=work / "final.mp4",
+            model=modal_model,
+            seed=seed,
+            seconds=seconds,
+            music_start=music_start,
+            music_db=music_db,
+        )
+        progress.done("Real AI-generated scenery video ready")
+        return final, plan, usage, track, visual_source
+
+    if video_provider != "image":
+        raise ValueError("--video-provider must be modal-wan or image")
+
     visual, visual_source = _resolve_visual(
         plan,
         work,
@@ -226,11 +330,6 @@ def build_scenery_promo(
         seconds=seconds,
         progress=progress,
     )
-    track = resolve_promo_music(music, campaign)
-    attribution = track_attribution(track)
-    if attribution:
-        plan.caption = f"{plan.caption}\n\n{attribution}"
-        progress.emit("Required CC attribution added to the TikTok caption")
     progress.emit(
         f"Adding music: {track.name} (hook starts at {music_start:.1f}s)"
     )

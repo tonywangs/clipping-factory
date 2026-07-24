@@ -60,6 +60,16 @@ Promotion music is never downloaded: it comes from `--music` or
 `assets/music/promotions/<campaign>/`. Outputs are stamped
 `campaign_licensed` and tagged with campaign/artist/track for dashboard review.
 
+## 2026-07-24: Wan 2.2 video generation on Modal
+The scenery format's default visual path is real image-to-video generation,
+not Ken Burns motion. OpenAI/Gemini creates the keyframe; a deployed Modal app
+runs Wan 2.2 and returns a finished music-mixed 1080×1920 clip. Wan was chosen
+for strong motion/photorealism and Apache 2.0 commercial terms. `wan-5b` on an
+H100 is the practical default; `wan-a14b` on an H200 is the slower max-quality
+profile. LTX-2 was rejected as the default because its weights use a custom
+community license. Model weights persist in a Modal Volume; local FFmpeg only
+extracts the package cover frame after remote generation.
+
 ## 2026-07-19: self-contained clips + dual framing
 Ranker prompt requires zero-prior-context openings and pulls start back to a nearby
 host question when present. Reframing detects stable left/right two-face layouts and
