@@ -289,6 +289,7 @@ def test_scenery_promo_from_existing_image(tmp_path: Path, monkeypatch):
         source=image,
         seconds=4.0,
         music_start=1.0,
+        video_provider="image",
     )
     assert _probe_dims(final) == "1080,1920"
     assert 3.7 <= media_duration(final) <= 4.2
@@ -311,6 +312,84 @@ def test_scenery_music_campaign_folder(tmp_path: Path, monkeypatch):
     from clipfactory.formats.scenery_promo import resolve_promo_music
 
     assert resolve_promo_music(None, "artist-july") == track.resolve()
+
+
+def test_scenery_modal_provider_delegates_all_rendering(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("LOCAL_ROOT", str(tmp_path))
+    from clipfactory.config import project_root
+
+    project_root.cache_clear()
+    image = tmp_path / "keyframe.png"
+    subprocess.run(
+        [
+            ffmpeg_bin(),
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=0x17335c:s=704x1280",
+            "-frames:v",
+            "1",
+            str(image),
+        ],
+        check=True,
+        capture_output=True,
+    )
+    music = tmp_path / "track.m4a"
+    subprocess.run(
+        [
+            ffmpeg_bin(),
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=220:duration=8",
+            "-c:a",
+            "aac",
+            str(music),
+        ],
+        check=True,
+        capture_output=True,
+    )
+
+    from clipfactory.formats import scenery_promo
+    from clipfactory.llm import LLMUsage
+    import clipfactory.modal_video as modal_video
+
+    fake_plan = scenery_promo.SceneryPlan(
+        title="moving waterfall",
+        image_prompt="waterfall in a moss forest",
+        video_prompt="water flows, fog drifts, leaves sway, slow camera push",
+        caption="somewhere quiet",
+        hashtags=["#scenery"],
+    )
+    monkeypatch.setattr(
+        scenery_promo,
+        "plan_scenery",
+        lambda concept, campaign="", artist="": (fake_plan, LLMUsage()),
+    )
+    received = {}
+
+    def fake_modal(**kwargs):
+        received.update(kwargs)
+        return _synthetic_source(kwargs["target"], 4.0)
+
+    monkeypatch.setattr(modal_video, "generate_modal_wan", fake_modal)
+    final, plan, usage, track, source = scenery_promo.build_scenery_promo(
+        "moving waterfall",
+        tmp_path / "work",
+        music=music,
+        source=image,
+        seconds=4.0,
+        video_provider="modal-wan",
+        modal_model="wan-a14b",
+        seed=42,
+    )
+    assert final.exists()
+    assert received["model"] == "wan-a14b"
+    assert received["seed"] == 42
+    assert "fog drifts" in received["prompt"]
+    assert received["music"] == music.resolve()
 
 
 def test_generated_clip_ids_are_distinct_per_run(tmp_path: Path, monkeypatch):

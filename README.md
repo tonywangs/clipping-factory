@@ -14,7 +14,7 @@ Posting is intentionally manual.
 | "Which bedroom would you sleep in the hardest" polls | `create poll --topic "..."` | LLM key; images same as history |
 | Sad-music scenery montage (NYC rain) | `create montage --collection nyc-rain --mood sad` | b-roll in `assets/broll/nyc-rain/`, tracks in `assets/music/moods/sad/` (or `--no-music`, add sound in TikTok) |
 | Fancam edits ("maddie ziegler attitude", loud booms) | `create fancam --source ep.mp4 --subject "maddie ziegler"` | a source video; moments auto-found via transcript or `--moments "12-15,40-44"` |
-| 10-second scenery music promos | `create scenery --prompt "aurora over a black-sand beach" --music track.mp3` | OpenAI/Gemini image key or `--source` image/video; campaign music file |
+| 10-second scenery music promos | `create scenery --prompt "aurora over a black-sand beach" --music track.mp3` | Modal account + Wan 2.2 deployment; OpenAI/Gemini generates the starting keyframe |
 
 All formats land in the same `outbox/<niche>/<run_id>/` structure with `meta.json`,
 so the review dashboard, run filters, and approve/reject flow work unchanged.
@@ -24,11 +24,15 @@ stamped `unlicensed` and flagged in the dashboard.
 
 ### Scenery music-promotion workflow
 
-This format intentionally stays simple: one strong vertical visual, subtle motion,
-one music hook, approximately 10 seconds, and no on-screen text.
+This format intentionally stays simple: one strong vertical shot, one music hook,
+approximately 10 seconds, and no on-screen text. The default is now **real Wan
+2.2 AI video generation on Modal**—not a zoomed still. Your laptop only sends a
+keyframe/prompt/music and downloads the finished clip.
+
+One-time Modal setup: follow [`infra/modal.md`](infra/modal.md).
 
 ```bash
-# Generate the scenery with OpenAI first, then Gemini as fallback:
+# Generate a starting keyframe, then animate it into real video with Wan 2.2 on Modal:
 uv run python -m clipfactory.create scenery \
   --prompt "rainy moss forest, ancient stone bridge, blue-hour fog" \
   --music ~/Downloads/artist-track.mp3 \
@@ -42,16 +46,25 @@ uv run python -m clipfactory.create scenery \
   --music ~/Downloads/track.mp3 \
   --image-provider gemini
 
-# Or animate an image / loop an AI-video export you already have:
+# Use a supplied keyframe instead of generating one:
 uv run python -m clipfactory.create scenery \
   --prompt "fantasy Arabian city at sunset" \
-  --source ~/Downloads/cityscape.mp4 \
+  --source ~/Downloads/cityscape.png \
   --music ~/Downloads/track.mp3
+
+# Max-quality A14B profile (H200; slower and more expensive):
+uv run python -m clipfactory.create scenery \
+  --prompt "misty fantasy waterfall, real flowing water and drifting fog" \
+  --campaign misty-calm-wisps \
+  --modal-model wan-a14b
 ```
 
 Instead of `--music`, put a campaign track in
 `assets/music/promotions/<campaign>/`. Outputs are tagged with campaign, artist,
 and track in `meta.json` and appear in the normal review dashboard.
+
+The old image-zoom implementation remains only as an explicit fallback:
+`--video-provider image`.
 
 ## Local setup
 
