@@ -31,6 +31,7 @@ def package_generated(
     license_status: LicenseStatus,
     tags: list[str],
     source_ref: str = "generated",
+    music_track: str | None = None,
 ) -> ProducedClip:
     root = project_root()
     outbox = root / "outbox" / niche / run_id / f"generated_{_slug(title)}"
@@ -43,7 +44,8 @@ def package_generated(
         check=True,
         capture_output=True,
     )
-    clip_id = make_clip_id(format_name, _slug(title), niche, 0.0, 0.0)
+    # Include run_id so repeated generated concepts remain distinct in state/dashboard.
+    clip_id = make_clip_id(format_name, f"{_slug(title)}:{run_id}", niche, 0.0, 0.0)
     meta = ClipMeta(
         clip_id=clip_id,
         run_id=run_id,
@@ -63,7 +65,7 @@ def package_generated(
         hook_sentence=hook_sentence,
         virality_reason=reason,
         caption_style=CaptionStyle.HORMOZI,
-        music_track=None,
+        music_track=music_track,
         tags=[format_name, *tags],
     )
     (outbox / "meta.json").write_text(meta.model_dump_json(indent=2))

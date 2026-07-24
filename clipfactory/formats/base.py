@@ -281,7 +281,16 @@ def sfx_between(segments: list[Path], sfx: Path, work_dir: Path) -> Path:
     return target
 
 
-def mix_music(video: Path, music: Path, target: Path, *, music_db: float = -4.0, duck_under_voice: bool = False, keep_video_audio: bool = True) -> Path:
+def mix_music(
+    video: Path,
+    music: Path,
+    target: Path,
+    *,
+    music_db: float = -4.0,
+    music_start: float = 0.0,
+    duck_under_voice: bool = False,
+    keep_video_audio: bool = True,
+) -> Path:
     """Lay a music bed under (or as) the audio track, with fades and loudnorm."""
     duration = media_duration(video)
     fade_out = max(0.0, duration - 0.8)
@@ -305,6 +314,8 @@ def mix_music(video: Path, music: Path, target: Path, *, music_db: float = -4.0,
             str(video),
             "-stream_loop",
             "-1",
+            "-ss",
+            f"{max(0.0, music_start):.3f}",
             "-i",
             str(music),
             "-filter_complex",

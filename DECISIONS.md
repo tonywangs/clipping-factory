@@ -39,15 +39,26 @@ When `YOUTUBE_API_KEY` is set, discovery prefers the YouTube Data API for channe
 handles, channel IDs, and playlists, then falls back to yt-dlp flat playlists.
 
 ## 2026-07-23: content creation suite
-`clipfactory/formats/` adds five generated formats (history POV, ASMR sequencer,
-ranked polls, mood montages, fancam edits) behind `python -m clipfactory.create`.
+`clipfactory/formats/` initially added five generated formats (history POV, ASMR
+sequencer, ranked polls, mood montages, fancam edits) behind
+`python -m clipfactory.create`; scenery promotions were added as the sixth.
 Shared ffmpeg helpers live in `formats/base.py`; all formats reuse the podcast
 outbox/meta/dashboard pipeline. TTS prefers OpenAI then free edge-tts. Image
-generation prefers operator folders, then OpenAI images, then styled text cards
-so builds never hard-fail. ASMR/montage source media is operator-supplied
+generation prefers operator folders, then OpenAI/Gemini images, then styled text
+cards so builds never hard-fail. ASMR/montage source media is operator-supplied
 (AI-video exports / rights-cleared b-roll); no copyrighted music is downloaded,
 and fancam/montage outputs are stamped `unlicensed` where third-party media is
 involved. Transition SFX is synthesized with ffmpeg when no assets exist.
+
+## 2026-07-24: scenery music-promotion format
+`create scenery` produces the deliberately minimal format seen on high-volume
+scenery accounts: one generated/supplied atmospheric visual, subtle Ken Burns
+motion (or a looped AI-video export), one campaign music hook, no text, ~10
+seconds. Image generation tries OpenAI then Gemini and can be pinned with
+`--image-provider`; operator media remains supported through `--source`.
+Promotion music is never downloaded: it comes from `--music` or
+`assets/music/promotions/<campaign>/`. Outputs are stamped
+`campaign_licensed` and tagged with campaign/artist/track for dashboard review.
 
 ## 2026-07-19: self-contained clips + dual framing
 Ranker prompt requires zero-prior-context openings and pulls start back to a nearby

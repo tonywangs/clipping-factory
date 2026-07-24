@@ -9,17 +9,49 @@ Posting is intentionally manual.
 
 | Format | Command | Needs |
 |---|---|---|
-| AI history POV ("day in the life of a victorian child") | `create history --topic "..."` | LLM key; TTS (OpenAI key or free edge-tts); images auto-generate with OpenAI key, else styled cards |
+| AI history POV ("day in the life of a victorian child") | `create history --topic "..."` | LLM key; TTS (OpenAI key or free edge-tts); images auto-generate with OpenAI/Gemini, else styled cards |
 | Glass-fruit ASMR | `create asmr --collection glass-fruit` | AI video clips you export into `assets/broll/asmr/glass-fruit/` |
 | "Which bedroom would you sleep in the hardest" polls | `create poll --topic "..."` | LLM key; images same as history |
 | Sad-music scenery montage (NYC rain) | `create montage --collection nyc-rain --mood sad` | b-roll in `assets/broll/nyc-rain/`, tracks in `assets/music/moods/sad/` (or `--no-music`, add sound in TikTok) |
 | Fancam edits ("maddie ziegler attitude", loud booms) | `create fancam --source ep.mp4 --subject "maddie ziegler"` | a source video; moments auto-found via transcript or `--moments "12-15,40-44"` |
+| 10-second scenery music promos | `create scenery --prompt "aurora over a black-sand beach" --music track.mp3` | OpenAI/Gemini image key or `--source` image/video; campaign music file |
 
 All formats land in the same `outbox/<niche>/<run_id>/` structure with `meta.json`,
 so the review dashboard, run filters, and approve/reject flow work unchanged.
-Generated content is stamped `license_status: original`; fancam/montage using
-others' footage or commercial music is stamped `unlicensed` and flagged in the
-dashboard.
+Generated content is stamped `license_status: original`; scenery promotions are
+`campaign_licensed`; fancam/montage using others' footage or commercial music is
+stamped `unlicensed` and flagged in the dashboard.
+
+### Scenery music-promotion workflow
+
+This format intentionally stays simple: one strong vertical visual, subtle motion,
+one music hook, approximately 10 seconds, and no on-screen text.
+
+```bash
+# Generate the scenery with OpenAI first, then Gemini as fallback:
+uv run python -m clipfactory.create scenery \
+  --prompt "rainy moss forest, ancient stone bridge, blue-hour fog" \
+  --music ~/Downloads/artist-track.mp3 \
+  --campaign artist-july \
+  --artist "Artist Name" \
+  --music-start 18.5
+
+# Force Gemini image generation:
+uv run python -m clipfactory.create scenery \
+  --prompt "aurora above a frozen black-sand beach" \
+  --music ~/Downloads/track.mp3 \
+  --image-provider gemini
+
+# Or animate an image / loop an AI-video export you already have:
+uv run python -m clipfactory.create scenery \
+  --prompt "fantasy Arabian city at sunset" \
+  --source ~/Downloads/cityscape.mp4 \
+  --music ~/Downloads/track.mp3
+```
+
+Instead of `--music`, put a campaign track in
+`assets/music/promotions/<campaign>/`. Outputs are tagged with campaign, artist,
+and track in `meta.json` and appear in the normal review dashboard.
 
 ## Local setup
 

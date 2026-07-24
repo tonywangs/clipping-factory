@@ -223,3 +223,114 @@ def test_generated_packaging(tmp_path: Path, monkeypatch):
     assert "poll" in meta["tags"]
     assert (package.directory / "clip.mp4").exists()
     assert (package.directory / "cover.jpg").exists()
+
+
+def test_scenery_promo_from_existing_image(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("LOCAL_ROOT", str(tmp_path))
+    from clipfactory.config import project_root
+
+    project_root.cache_clear()
+    # A supplied image avoids all external image APIs in this render test.
+    image = tmp_path / "aurora.png"
+    subprocess.run(
+        [
+            ffmpeg_bin(),
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=0x17335c:s=1024x1536",
+            "-frames:v",
+            "1",
+            str(image),
+        ],
+        check=True,
+        capture_output=True,
+    )
+    music = tmp_path / "promo.m4a"
+    subprocess.run(
+        [
+            ffmpeg_bin(),
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=220:duration=8",
+            "-c:a",
+            "aac",
+            str(music),
+        ],
+        check=True,
+        capture_output=True,
+    )
+
+    from clipfactory.formats import scenery_promo
+    from clipfactory.llm import LLMUsage
+
+    fake = scenery_promo.SceneryPlan(
+        title="aurora after midnight",
+        image_prompt="aurora over a frozen beach",
+        caption="somewhere quiet",
+        hashtags=["#aurora", "#scenery"],
+    )
+    monkeypatch.setattr(
+        scenery_promo,
+        "plan_scenery",
+        lambda concept, campaign="", artist="": (fake, LLMUsage(3, 4)),
+    )
+    final, plan, usage, track, visual_source = scenery_promo.build_scenery_promo(
+        "aurora over a black-sand beach",
+        tmp_path / "work",
+        music=music,
+        campaign="test-campaign",
+        source=image,
+        seconds=4.0,
+        music_start=1.0,
+    )
+    assert _probe_dims(final) == "1080,1920"
+    assert 3.7 <= media_duration(final) <= 4.2
+    assert track == music.resolve()
+    assert visual_source == str(image.resolve())
+    assert plan.title == "aurora after midnight"
+    assert usage.output_tokens == 4
+
+
+def test_scenery_music_campaign_folder(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("LOCAL_ROOT", str(tmp_path))
+    from clipfactory.config import project_root
+
+    project_root.cache_clear()
+    campaign = tmp_path / "assets" / "music" / "promotions" / "artist-july"
+    campaign.mkdir(parents=True)
+    track = campaign / "hook.wav"
+    track.write_bytes(b"placeholder")
+    from clipfactory.formats.scenery_promo import resolve_promo_music
+
+    assert resolve_promo_music(None, "artist-july") == track.resolve()
+
+
+def test_generated_clip_ids_are_distinct_per_run(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("LOCAL_ROOT", str(tmp_path))
+    from clipfactory.config import project_root
+
+    project_root.cache_clear()
+    from clipfactory.formats.packaging import package_generated
+    from clipfactory.models import LicenseStatus
+
+    first_video = _synthetic_source(tmp_path / "first.mp4", 2.0)
+    second_video = _synthetic_source(tmp_path / "second.mp4", 2.0)
+    common = dict(
+        format_name="scenery",
+        niche="scenery",
+        title="same concept",
+        caption="caption",
+        hashtags=["#scenery"],
+        hook_sentence="hook",
+        reason="promo",
+        score=75,
+        license_status=LicenseStatus.CAMPAIGN_LICENSED,
+        tags=[],
+    )
+    first = package_generated(first_video, run_id="run-one", **common)
+    second = package_generated(second_video, run_id="run-two", **common)
+    assert first.clip_id != second.clip_id
