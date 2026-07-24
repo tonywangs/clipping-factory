@@ -6,6 +6,7 @@ Formats:
   poll     — "which X would you pick" ranked slideshow
   montage  — mood montage (music over scenery b-roll)
   fancam   — iconic-moments edit with loud transitions
+  scenery  — 10-second AI scenery + music-promotion track
 
 Examples:
   python -m clipfactory.create history --topic "day in the life of a victorian child"
@@ -13,6 +14,7 @@ Examples:
   python -m clipfactory.create poll --topic "which bedroom would you sleep in the hardest"
   python -m clipfactory.create montage --collection nyc-rain --mood sad
   python -m clipfactory.create fancam --source dance_moms_s2e3.mp4 --subject "maddie ziegler"
+  python -m clipfactory.create scenery --prompt "aurora over a black-sand beach" --music track.mp3
 """
 
 from __future__ import annotations
@@ -32,6 +34,7 @@ from .formats import (
     build_history_video,
     build_montage_video,
     build_poll_video,
+    build_scenery_promo,
     package_generated,
     parse_moments,
     plan_from_transcript,
@@ -43,7 +46,7 @@ from .progress import Progress
 from .state import build_state
 
 
-def _finish(video: Path, *, args, format_name: str, run_id: str, title: str, caption: str, hashtags: list[str], hook: str, reason: str, license_status: LicenseStatus, source_ref: str = "generated") -> dict:
+def _finish(video: Path, *, args, format_name: str, run_id: str, title: str, caption: str, hashtags: list[str], hook: str, reason: str, license_status: LicenseStatus, source_ref: str = "generated", music_track: str | None = None) -> dict:
     progress = Progress("package")
     settings = load_settings()
     state = build_state(settings.state_backend, os.getenv("FIRESTORE_PROJECT"))
@@ -62,6 +65,7 @@ def _finish(video: Path, *, args, format_name: str, run_id: str, title: str, cap
         license_status=license_status,
         tags=list(args.tag or []),
         source_ref=source_ref,
+        music_track=music_track,
     )
     progress.emit("Recording clip in the review state database…")
     state.add_clip(
@@ -209,6 +213,50 @@ def cmd_fancam(args, run_id: str, work: Path) -> dict:
     return result
 
 
+def cmd_scenery(args, run_id: str, work: Path) -> dict:
+    source = Path(args.source).expanduser() if args.source else None
+    video, plan, usage, track, visual_source = build_scenery_promo(
+        args.prompt,
+        work,
+        music=args.music,
+        campaign=args.campaign,
+        artist=args.artist,
+        source=source,
+        image_provider=args.image_provider,
+        seconds=args.seconds,
+        music_start=args.music_start,
+        music_db=args.music_db,
+    )
+    campaign_tags = [
+        f"campaign:{args.campaign}",
+        f"track:{track.stem}",
+    ]
+    if args.artist:
+        campaign_tags.append(f"artist:{args.artist}")
+    args.tag = [*list(args.tag or []), *campaign_tags]
+    result = _finish(
+        video,
+        args=args,
+        format_name="scenery",
+        run_id=run_id,
+        title=plan.title,
+        caption=plan.caption,
+        hashtags=plan.hashtags,
+        hook=args.prompt,
+        reason="atmospheric scenery music promotion",
+        license_status=LicenseStatus.CAMPAIGN_LICENSED,
+        source_ref=visual_source,
+        music_track=track.name,
+    )
+    result["music_track"] = str(track)
+    result["campaign"] = args.campaign
+    result["token_usage"] = {
+        "input_tokens": usage.input_tokens,
+        "output_tokens": usage.output_tokens,
+    }
+    return result
+
+
 def main(argv: list[str] | None = None) -> None:
     load_dotenv()
     parser = argparse.ArgumentParser(description="ClipFactory viral content creation suite")
@@ -253,6 +301,46 @@ def main(argv: list[str] | None = None) -> None:
     p_fancam.add_argument("--sfx", default="boom", choices=["boom", "whoosh", "glitch"])
     common(p_fancam)
 
+    p_scenery = sub.add_parser(
+        "scenery",
+        help="10-second AI scenery video for a music-promotion campaign",
+    )
+    p_scenery.add_argument(
+        "--prompt",
+        required=True,
+        help='e.g. "rainy moss forest with a stone bridge at blue hour"',
+    )
+    p_scenery.add_argument(
+        "--music",
+        default=None,
+        help="Promotion track file/folder; otherwise assets/music/promotions/<campaign>/",
+    )
+    p_scenery.add_argument(
+        "--campaign",
+        default="default",
+        help="Campaign name used for music folder and dashboard tags",
+    )
+    p_scenery.add_argument("--artist", default="", help="Artist/brand for dashboard tags")
+    p_scenery.add_argument(
+        "--source",
+        default=None,
+        help="Optional existing AI-generated image/video instead of generating one",
+    )
+    p_scenery.add_argument(
+        "--image-provider",
+        choices=["auto", "openai", "gemini"],
+        default="auto",
+    )
+    p_scenery.add_argument("--seconds", type=float, default=10.0)
+    p_scenery.add_argument(
+        "--music-start",
+        type=float,
+        default=0.0,
+        help="Seconds into the track where its hook begins",
+    )
+    p_scenery.add_argument("--music-db", type=float, default=-2.0)
+    common(p_scenery)
+
     args = parser.parse_args(argv)
     run_id = make_run_id(args.run_label or args.format)
     work = project_root() / "work" / f"{args.format}_{run_id}"
@@ -265,6 +353,7 @@ def main(argv: list[str] | None = None) -> None:
         "poll": cmd_poll,
         "montage": cmd_montage,
         "fancam": cmd_fancam,
+        "scenery": cmd_scenery,
     }
     try:
         result = handlers[args.format](args, run_id, work)
