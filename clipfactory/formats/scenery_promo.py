@@ -110,6 +110,15 @@ def resolve_promo_music(
     )
 
 
+def track_attribution(track: Path) -> str | None:
+    """Read the required caption credit bundled beside a licensed track."""
+    path = track.parent / "ATTRIBUTION.txt"
+    if not path.exists():
+        return None
+    credit = " ".join(line.strip() for line in path.read_text().splitlines() if line.strip())
+    return credit or None
+
+
 def _render_source_video(source: Path, target: Path, seconds: float) -> Path:
     """Loop/crop an existing AI-generated scenery clip to exact duration."""
     vf = (
@@ -218,6 +227,10 @@ def build_scenery_promo(
         progress=progress,
     )
     track = resolve_promo_music(music, campaign)
+    attribution = track_attribution(track)
+    if attribution:
+        plan.caption = f"{plan.caption}\n\n{attribution}"
+        progress.emit("Required CC attribution added to the TikTok caption")
     progress.emit(
         f"Adding music: {track.name} (hook starts at {music_start:.1f}s)"
     )

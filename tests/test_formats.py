@@ -263,6 +263,9 @@ def test_scenery_promo_from_existing_image(tmp_path: Path, monkeypatch):
         check=True,
         capture_output=True,
     )
+    (tmp_path / "ATTRIBUTION.txt").write_text(
+        '"Test Track" Test Artist — CC BY 4.0 https://creativecommons.org/licenses/by/4.0/'
+    )
 
     from clipfactory.formats import scenery_promo
     from clipfactory.llm import LLMUsage
@@ -292,6 +295,7 @@ def test_scenery_promo_from_existing_image(tmp_path: Path, monkeypatch):
     assert track == music.resolve()
     assert visual_source == str(image.resolve())
     assert plan.title == "aurora after midnight"
+    assert "CC BY 4.0" in plan.caption
     assert usage.output_tokens == 4
 
 
