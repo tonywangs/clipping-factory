@@ -19,6 +19,7 @@ from pathlib import Path
 
 from ..llm import LLMUsage, call_llm, extract_json
 from ..models import Transcript
+from ..progress import Progress
 from .base import (
     finalize,
     media_duration,
@@ -91,16 +92,31 @@ def build_fancam_video(
     sfx_kind: str = "boom",
     max_moment_seconds: float = 6.0,
 ) -> Path:
+    progress = Progress("fancam")
     work.mkdir(parents=True, exist_ok=True)
     if not plan.moments:
         raise ValueError("Fancam plan has no moments — pass --moments or a transcript-rankable source")
     source_duration = media_duration(source)
+    progress.emit(
+        f"Source is {source_duration:.1f}s; rendering {min(len(plan.moments), 10)} iconic moment(s)"
+    )
     segments: list[Path] = []
     for index, (start, end) in enumerate(plan.moments[:10]):
         start = max(0.0, min(start, source_duration - 0.5))
         cut = min(end - start, max_moment_seconds, source_duration - start)
+        progress.step(
+            index + 1,
+            min(len(plan.moments), 10),
+            f"Cutting {start:.1f}–{start + cut:.1f}s",
+        )
         segments.append(to_vertical_segment(source, work / f"moment_{index:02d}.mp4", start, cut))
+    progress.emit(f"Preparing {sfx_kind} transition SFX…")
     sfx = pick_sfx(work, sfx_kind)
+    progress.emit("Combining moments and slamming SFX on each cut…")
     assembled = sfx_between(segments, sfx, work)
+    progress.emit("Adding title overlay…")
     labeled = overlay_text(assembled, work / "labeled.mp4", plan.overlay, size=88, y="h*0.10")
-    return finalize(labeled, work / "final.mp4", max_seconds=60)
+    progress.emit("Finalizing video…")
+    final = finalize(labeled, work / "final.mp4", max_seconds=60)
+    progress.done("Fancam ready")
+    return final

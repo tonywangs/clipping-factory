@@ -17,6 +17,7 @@ from pathlib import Path
 
 from ..config import project_root
 from ..llm import LLMUsage, call_llm, extract_json
+from ..progress import Progress
 from .base import (
     VIDEO_KINDS,
     concat_segments,
@@ -68,14 +69,17 @@ def build_asmr_video(
     min_cut: float = 2.0,
     max_cut: float = 4.5,
 ) -> tuple[Path, AsmrPlan, LLMUsage]:
+    progress = Progress("asmr")
     work.mkdir(parents=True, exist_ok=True)
     source_dir = project_root() / "assets" / "broll" / "asmr" / collection
+    progress.emit(f"Scanning source clips in {source_dir}")
     clips = gather_media(source_dir, VIDEO_KINDS)
     if not clips:
         raise FileNotFoundError(
             f"No ASMR source clips in {source_dir}. Export AI-generated clips (Sora/Veo/Runway "
             "glass-fruit renders, etc.) into that folder, then re-run. Any mp4/mov works."
         )
+    progress.emit(f"Found {len(clips)} source clip(s); generating title and caption…")
     plan, usage = plan_asmr(collection)
     rng = random.Random(collection)
     segments: list[Path] = []
@@ -88,13 +92,21 @@ def build_asmr_video(
         duration = media_duration(clip)
         cut = min(rng.uniform(min_cut, max_cut), max(0.8, duration - 0.1))
         start = 0.0 if duration <= cut + 0.2 else rng.uniform(0, duration - cut - 0.1)
+        progress.emit(
+            f"Cut {index + 1}: {clip.name} @ {start:.1f}s for {cut:.1f}s "
+            f"({total:.1f}/{target_seconds:.1f}s assembled)"
+        )
         segment = to_vertical_segment(clip, work / f"cut_{index:02d}.mp4", start, cut)
         segments.append(segment)
         total += cut
         index += 1
         if index > 40:
             break
+    progress.emit(f"Combining {len(segments)} cuts…")
     assembled = concat_segments(segments, work / "assembled.mp4", with_audio=True)
+    progress.emit("Adding on-screen label…")
     labeled = overlay_text(assembled, work / "labeled.mp4", plan.label, size=80, y="h*0.08")
+    progress.emit("Finalizing video…")
     final = finalize(labeled, work / "final.mp4", max_seconds=60)
+    progress.done("ASMR video ready")
     return final, plan, usage

@@ -18,6 +18,7 @@ from pathlib import Path
 
 from ..config import project_root
 from ..llm import LLMUsage, call_llm, extract_json
+from ..progress import Progress
 from .base import (
     AUDIO_KINDS,
     VIDEO_KINDS,
@@ -69,14 +70,17 @@ def build_montage_video(
     max_cut: float = 5.0,
     use_music: bool = True,
 ) -> tuple[Path, MontagePlan, LLMUsage]:
+    progress = Progress("montage")
     work.mkdir(parents=True, exist_ok=True)
     source_dir = project_root() / "assets" / "broll" / collection
+    progress.emit(f"Scanning b-roll in {source_dir}")
     clips = gather_media(source_dir, VIDEO_KINDS)
     if not clips:
         raise FileNotFoundError(
             f"No b-roll in {source_dir}. Drop scenery clips (e.g. NYC rain footage you have "
             "rights to) into that folder, then re-run."
         )
+    progress.emit(f"Found {len(clips)} b-roll clip(s); generating overlay and caption…")
     plan, usage = plan_montage(collection, mood)
     rng = random.Random(f"{collection}:{mood}")
     ordered = clips[:]
@@ -88,15 +92,29 @@ def build_montage_video(
         duration = media_duration(clip)
         cut = min(rng.uniform(min_cut, max_cut), max(1.0, duration - 0.1))
         start = 0.0 if duration <= cut + 0.2 else rng.uniform(0, duration - cut - 0.1)
+        progress.emit(
+            f"Cut {index + 1}: {clip.name} @ {start:.1f}s for {cut:.1f}s "
+            f"({total:.1f}/{target_seconds:.1f}s assembled)"
+        )
         segments.append(to_vertical_segment(clip, work / f"cut_{index:02d}.mp4", start, cut, mute=True))
         total += cut
         index += 1
         if index > 30:
             break
+    progress.emit(f"Combining {len(segments)} scenery cuts…")
     assembled = concat_segments(segments, work / "assembled.mp4", with_audio=False)
+    progress.emit("Adding mood text overlay…")
     labeled = overlay_text(assembled, work / "labeled.mp4", plan.overlay, size=64, y="h*0.45")
     tracks = gather_media(project_root() / "assets" / "music" / "moods" / mood, AUDIO_KINDS)
     if use_music and tracks:
-        labeled = mix_music(labeled, rng.choice(tracks), work / "with_music.mp4", music_db=-2, keep_video_audio=False)
+        selected_track = rng.choice(tracks)
+        progress.emit(f"Mixing {mood} music track: {selected_track.name}")
+        labeled = mix_music(labeled, selected_track, work / "with_music.mp4", music_db=-2, keep_video_audio=False)
+    elif use_music:
+        progress.emit(f"No music found in assets/music/moods/{mood}; continuing silently")
+    else:
+        progress.emit("Music disabled; add the trending sound inside TikTok")
+    progress.emit("Finalizing video…")
     final = finalize(labeled, work / "final.mp4", max_seconds=60)
+    progress.done("Montage ready")
     return final, plan, usage

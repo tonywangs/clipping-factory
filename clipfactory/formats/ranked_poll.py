@@ -14,6 +14,7 @@ from pathlib import Path
 
 from ..config import project_root
 from ..llm import LLMUsage, call_llm, extract_json
+from ..progress import Progress
 from .base import (
     AUDIO_KINDS,
     Panel,
@@ -90,11 +91,19 @@ def build_poll_video(
     seconds_per_option: float = 2.6,
     music_mood: str = "suspense",
 ) -> tuple[Path, PollPlan, LLMUsage]:
+    progress = Progress("poll")
     work.mkdir(parents=True, exist_ok=True)
+    progress.emit(f"Generating {options} poll options with the configured LLM…")
     plan, usage = plan_poll(topic, options)
+    progress.emit(f"Plan ready: {len(plan.options)} options")
     pool = operator_images(topic)
+    if pool:
+        progress.emit(f"Using {len(pool)} operator image(s)")
+    else:
+        progress.emit("No operator images found; trying AI images, then styled cards")
     panels: list[Panel] = [Panel(duration=2.2, image=None, label=plan.intro, bg_color="0x0d0d0d")]
     for index, option in enumerate(plan.options):
+        progress.step(index + 1, len(plan.options), f"Preparing “{option.label}”")
         image = pool[index % len(pool)] if pool else generate_image(
             option.image_prompt, work / f"option_{index:02d}.png", style_suffix=", vertical 9:16, photorealistic, no text"
         )
@@ -107,10 +116,19 @@ def build_poll_video(
             )
         )
     panels.append(Panel(duration=2.4, image=None, label=plan.outro, bg_color="0x0d0d0d"))
-    segments = [render_panel(panel, work / f"panel_{index:02d}.mp4") for index, panel in enumerate(panels)]
+    segments = []
+    for index, panel in enumerate(panels):
+        progress.step(index + 1, len(panels), "Rendering panel")
+        segments.append(render_panel(panel, work / f"panel_{index:02d}.mp4"))
+    progress.emit("Combining panels…")
     assembled = concat_segments(segments, work / "assembled.mp4", with_audio=False)
     music = gather_media(project_root() / "assets" / "music" / "moods" / music_mood, AUDIO_KINDS)
     if music:
+        progress.emit(f"Adding {music_mood} music…")
         assembled = mix_music(assembled, music[0], work / "with_music.mp4", music_db=-6, keep_video_audio=False)
+    else:
+        progress.emit(f"No {music_mood} music found; adding a silent audio track")
+    progress.emit("Finalizing video…")
     final = finalize(assembled, work / "final.mp4", max_seconds=60)
+    progress.done("Poll video ready")
     return final, plan, usage

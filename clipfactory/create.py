@@ -39,12 +39,15 @@ from .formats import (
 from .formats.fancam import FancamPlan
 from .ids import make_run_id
 from .models import LicenseStatus
+from .progress import Progress
 from .state import build_state
 
 
 def _finish(video: Path, *, args, format_name: str, run_id: str, title: str, caption: str, hashtags: list[str], hook: str, reason: str, license_status: LicenseStatus, source_ref: str = "generated") -> dict:
+    progress = Progress("package")
     settings = load_settings()
     state = build_state(settings.state_backend, os.getenv("FIRESTORE_PROJECT"))
+    progress.emit("Writing clip.mp4, cover.jpg, and meta.json to the outbox…")
     package = package_generated(
         video,
         format_name=format_name,
@@ -60,6 +63,7 @@ def _finish(video: Path, *, args, format_name: str, run_id: str, title: str, cap
         tags=list(args.tag or []),
         source_ref=source_ref,
     )
+    progress.emit("Recording clip in the review state database…")
     state.add_clip(
         package.clip_id,
         format_name,
@@ -68,6 +72,7 @@ def _finish(video: Path, *, args, format_name: str, run_id: str, title: str, cap
         str(package.directory),
         package.meta.model_dump(mode="json"),
     )
+    progress.done(f"Packaged at {package.directory}")
     return {
         "clip_id": package.clip_id,
         "run_id": run_id,
@@ -167,6 +172,8 @@ def cmd_fancam(args, run_id: str, work: Path) -> dict:
             moments=parse_moments(args.moments),
         )
     else:
+        progress = Progress("fancam")
+        progress.emit("No manual moments supplied; transcribing source video…")
         settings = load_settings()
         from .transcribe import transcribe
         from .transcribe.service import media_content_hash
@@ -178,7 +185,9 @@ def cmd_fancam(args, run_id: str, work: Path) -> dict:
             settings.whisper_device,
             content_hash=media_content_hash(source),
         )
+        progress.emit("Transcript ready; asking the LLM for iconic moments…")
         plan, usage = plan_from_transcript(transcript, args.subject)
+        progress.emit(f"Selected {len(plan.moments)} moment(s)")
         usage_tokens = {"input_tokens": usage.input_tokens, "output_tokens": usage.output_tokens}
         if args.overlay:
             plan.overlay = args.overlay
@@ -247,6 +256,9 @@ def main(argv: list[str] | None = None) -> None:
     args = parser.parse_args(argv)
     run_id = make_run_id(args.run_label or args.format)
     work = project_root() / "work" / f"{args.format}_{run_id}"
+    progress = Progress("create")
+    progress.emit(f"Starting {args.format} run {run_id}")
+    progress.emit(f"Intermediate files: {work}")
     handlers = {
         "history": cmd_history,
         "asmr": cmd_asmr,
@@ -258,7 +270,9 @@ def main(argv: list[str] | None = None) -> None:
         result = handlers[args.format](args, run_id, work)
     finally:
         if not args.keep_work and work.exists():
+            progress.emit("Cleaning intermediate render files…")
             shutil.rmtree(work, ignore_errors=True)
+    progress.done(f"Output ready: {result['path']}")
     print(json.dumps({"format": args.format, **result}, indent=2))
 
 

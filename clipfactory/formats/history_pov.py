@@ -27,6 +27,7 @@ from .base import (
 )
 from ..config import project_root
 from ..ffmpeg_bin import ffmpeg_bin
+from ..progress import Progress
 from .images import generate_image, operator_images, slugify
 from .tts import synthesize
 
@@ -106,8 +107,11 @@ def _burn_scene_caption(segment: Path, target: Path, text: str) -> Path:
 
 
 def build_history_video(topic: str, work: Path, *, music_mood: str = "cinematic", voice: str = "") -> tuple[Path, HistoryScript, LLMUsage]:
+    progress = Progress("history")
     work.mkdir(parents=True, exist_ok=True)
+    progress.emit("Writing script with the configured LLM…")
     script, usage = write_script(topic)
+    progress.emit(f"Script ready: {len(script.scenes)} scenes")
     (work / "script.json").write_text(
         json.dumps(
             {
@@ -121,14 +125,20 @@ def build_history_video(topic: str, work: Path, *, music_mood: str = "cinematic"
         )
     )
     pool = operator_images(topic)
+    if pool:
+        progress.emit(f"Using {len(pool)} operator image(s) from assets/images/")
+    else:
+        progress.emit("No operator images found; trying AI images, then styled cards")
     segments: list[Path] = []
     narrations: list[Path] = []
     lines = [script.hook, *[scene.narration for scene in script.scenes]]
     labels = ["", *[scene.label for scene in script.scenes]]
     for index, line in enumerate(lines):
+        progress.step(index + 1, len(lines), "Generating narration")
         audio = synthesize(line, work / f"narration_{index:02d}.mp3", voice=voice)
         narrations.append(audio)
         duration = max(2.2, media_duration(audio) + 0.35)
+        progress.step(index + 1, len(lines), "Sourcing scene image")
         if index == 0:
             image = _scene_image(script.scenes[0], 0, pool, work)
             panel = Panel(duration=duration, image=image, label=None)
@@ -136,6 +146,8 @@ def build_history_video(topic: str, work: Path, *, music_mood: str = "cinematic"
             scene = script.scenes[index - 1]
             image = _scene_image(scene, index - 1, pool, work)
             panel = Panel(duration=duration, image=image, label=scene.label or None)
+        image_source = "image" if image else "styled card"
+        progress.step(index + 1, len(lines), f"Rendering scene ({duration:.1f}s, {image_source})")
         silent = render_panel(panel, work / f"panel_{index:02d}.mp4")
         captioned = _burn_scene_caption(silent, work / f"panelcap_{index:02d}.mp4", line)
         with_voice = work / f"scene_{index:02d}.mp4"
@@ -166,9 +178,15 @@ def build_history_video(topic: str, work: Path, *, music_mood: str = "cinematic"
             ]
         )
         segments.append(with_voice)
+    progress.emit("Combining rendered scenes…")
     assembled = concat_segments(segments, work / "assembled.mp4", with_audio=True)
     music = gather_media(project_root() / "assets" / "music" / "moods" / music_mood, AUDIO_KINDS)
     if music:
+        progress.emit(f"Mixing {music_mood} music bed under narration…")
         assembled = mix_music(assembled, music[0], work / "with_music.mp4", music_db=-20, duck_under_voice=True)
+    else:
+        progress.emit(f"No {music_mood} music found; continuing without music")
+    progress.emit("Finalizing video (loudness, codec, faststart)…")
     final = finalize(assembled, work / "final.mp4", max_seconds=90)
+    progress.done("History video ready")
     return final, script, usage
